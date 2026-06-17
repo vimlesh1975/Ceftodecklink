@@ -1,0 +1,16 @@
+build/
+out/
+.vs/
+third_party/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.exp
+*.log

@@ -1,0 +1,191 @@
+# CeftoDecklink
+
+CeftoDecklink is a Windows desktop renderer for sending an existing HTML/CasparCG-style page to a DeckLink SDI output pipeline.
+
+The current build is a practical development scaffold:
+
+- loads `http://localhost:14000/CasparcgOutput` by default
+- shows a compact `192 x 108` preview drawn from a full `1920 x 1080` offscreen WebView2 render
+- hides browser scrollbars so the preview behaves like a video frame, not a web page
+- enumerates installed DeckLink devices through the native Blackmagic COM interfaces
+- includes `None (preview only)` and `Mock DeckLink Output` modes for machines without DeckLink hardware
+- keeps the real CEF and DeckLink output integration points separated behind small interfaces
+
+The preview is intentionally small for now, but it represents the full HD frame. It is not a cropped browser window.
+
+## Current Status
+
+Working now:
+
+- Win32 desktop UI
+- URL entry
+- output mode selector
+- DeckLink device selector
+- native DeckLink device enumeration
+- preview-only mode
+- mock output mode with counters
+- WebView2-based full-frame preview
+- automatic WebView2 SDK download during build
+
+Still scaffolded:
+
+- production CEF offscreen renderer
+- scheduled DeckLink SDI output
+- DeckLink frame scheduling, pacing, and audio/video sync
+
+## Requirements
+
+- Windows 10 or later
+- Visual Studio 2022 with **Desktop development with C++**
+- CMake, either from Visual Studio or on `PATH`
+- Microsoft Edge WebView2 Runtime
+- Blackmagic Desktop Video drivers if you want DeckLink device enumeration
+- Blackmagic DeckLink SDK when implementing real SDI output
+
+The build script downloads the Microsoft WebView2 NuGet package into `third_party/webview2/`. That folder is intentionally ignored by Git.
+
+## Quick Start
+
+Build:
+
+```powershell
+.\scripts\build.ps1
+```
+
+Run:
+
+```powershell
+.\build\Release\CeftoDecklink.exe
+```
+
+Default HTML URL:
+
+```text
+http://localhost:14000/CasparcgOutput
+```
+
+If you do not have DeckLink hardware installed, select:
+
+```text
+None (preview only)
+```
+
+or:
+
+```text
+Mock DeckLink Output
+```
+
+## Manual CMake Build
+
+The helper script is recommended because it prepares the WebView2 SDK. If you want to run CMake manually, prepare the SDK first:
+
+```powershell
+.\scripts\ensure-webview2-sdk.ps1
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release
+```
+
+The executable is created at:
+
+```text
+build\Release\CeftoDecklink.exe
+```
+
+## How The Preview Works
+
+The visible preview is only `192 x 108`, which is 10% of `1920 x 1080`.
+
+Internally, WebView2 renders the configured page at a full `1920 x 1080` offscreen size. The app captures that frame and draws a scaled copy into the compact preview panel. This avoids the usual embedded-browser problems where a small control shows only the top-left corner or adds scrollbars.
+
+## DeckLink Notes
+
+Device enumeration is native C++ and uses the DeckLink COM registration installed by Blackmagic Desktop Video.
+
+`DeckLinkAPI.Interop.dll` is not required for this native C++ app. That DLL is useful for .NET projects. For real output in this project, the preferred route is the Blackmagic DeckLink SDK headers and libraries, wired into:
+
+```text
+src/decklink/DeckLinkOutput.cpp
+```
+
+The placeholder output path is already isolated behind:
+
+```text
+src/core/RendererInterfaces.h
+src/core/RenderController.cpp
+```
+
+## Architecture
+
+Target production pipeline:
+
+```text
+HTML URL
+-> CEF offscreen renderer
+-> BGRA frame buffer
+-> DeckLink scheduled output
+-> SDI
+```
+
+Current development pipeline:
+
+```text
+HTML URL
+-> WebView2 offscreen full-HD preview
+-> scaled Win32 preview
+
+Mock frame source
+-> mock DeckLink output counters
+```
+
+Important folders:
+
+```text
+src/app/        Win32 UI and WebView2 preview
+src/core/       renderer/output interfaces and controller
+src/decklink/   DeckLink enumerator and output adapter
+src/cef/        CEF offscreen renderer adapter
+src/mock/       mock source/output for development without hardware
+docs/           SDK integration notes
+scripts/        build and dependency helper scripts
+```
+
+## Enabling Real SDK Work
+
+The project exposes feature switches for the future production integrations:
+
+```powershell
+cmake -S . -B build `
+  -G "Visual Studio 17 2022" -A x64 `
+  -DCEFTOD_WITH_CEF=ON `
+  -DCEFTOD_CEF_ROOT="C:\SDKs\cef_binary" `
+  -DCEFTOD_WITH_DECKLINK=ON `
+  -DCEFTOD_DECKLINK_SDK_ROOT="C:\SDKs\Blackmagic DeckLink SDK"
+```
+
+Detailed notes are in:
+
+```text
+docs\SDK_INTEGRATION.md
+```
+
+## Troubleshooting
+
+If WebView2 headers are missing, run:
+
+```powershell
+.\scripts\ensure-webview2-sdk.ps1
+```
+
+If no DeckLink devices appear:
+
+- install or repair Blackmagic Desktop Video
+- connect/power the DeckLink device
+- restart the app after driver installation
+- use `None (preview only)` while working without hardware
+
+If the preview page is blank:
+
+- confirm the source page is running at `http://localhost:14000/CasparcgOutput`
+- paste the same URL into Edge or Chrome
+- check that the page is designed for a `1920 x 1080` viewport
