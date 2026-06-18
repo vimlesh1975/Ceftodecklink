@@ -208,8 +208,6 @@ void MainWindow::OnCreate() {
     RECT client = {};
     GetClientRect(hwnd_, &client);
     LayoutControls(client);
-
-    PostMessageW(hwnd_, WM_COMMAND, MAKEWPARAM(kStartButtonId, BN_CLICKED), reinterpret_cast<LPARAM>(startButton_));
 }
 
 void MainWindow::OnSize() {
