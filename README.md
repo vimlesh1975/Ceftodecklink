@@ -2,14 +2,14 @@
 
 CeftoDecklink is a Windows desktop renderer for sending an existing HTML/CasparCG-style page to a DeckLink SDI output pipeline.
 
-The current build is a practical development scaffold:
+The current build is a CEF offscreen renderer wired to the DeckLink output path:
 
 - loads `http://localhost:14000/CasparcgOutput` by default
-- shows a compact `192 x 108` preview drawn from a full `1920 x 1080` offscreen WebView2 render
-- hides browser scrollbars so the preview behaves like a video frame, not a web page
+- renders the page with Chromium Embedded Framework offscreen rendering
+- shows a compact `192 x 108` preview drawn from the same full-frame BGRA source used for output
 - enumerates installed DeckLink devices through the native Blackmagic COM interfaces
 - includes `None (preview only)` and `Mock DeckLink Output` modes for machines without DeckLink hardware
-- keeps the real CEF and DeckLink output integration points separated behind small interfaces
+- schedules BGRA frames to real DeckLink SDI output when a device is selected
 
 The preview is intentionally small for now, but it represents the full HD frame. It is not a cropped browser window.
 
@@ -24,25 +24,19 @@ Working now:
 - native DeckLink device enumeration
 - preview-only mode
 - mock output mode with counters
-- WebView2-based full-frame preview
-- automatic WebView2 SDK download during build
-
-Still scaffolded:
-
-- production CEF offscreen renderer
 - scheduled DeckLink SDI output
-- DeckLink frame scheduling, pacing, and audio/video sync
+- CEF offscreen rendering
+- automatic CEF SDK download during build
 
 ## Requirements
 
 - Windows 10 or later
 - Visual Studio 2022 with **Desktop development with C++**
 - CMake, either from Visual Studio or on `PATH`
-- Microsoft Edge WebView2 Runtime
+- CEF runtime files copied beside the exe by the build
 - Blackmagic Desktop Video drivers if you want DeckLink device enumeration
-- Blackmagic DeckLink SDK when implementing real SDI output
 
-The build script downloads the Microsoft WebView2 NuGet package into `third_party/webview2/`. That folder is intentionally ignored by Git.
+The build script downloads the CEF Windows 64-bit minimal package into `third_party/cef/`. That folder is intentionally ignored by Git.
 
 ## Quick Start
 
@@ -78,11 +72,11 @@ Mock DeckLink Output
 
 ## Manual CMake Build
 
-The helper script is recommended because it prepares the WebView2 SDK. If you want to run CMake manually, prepare the SDK first:
+The helper script is recommended because it prepares the CEF SDK. If you want to run CMake manually, prepare the SDK first:
 
 ```powershell
-.\scripts\ensure-webview2-sdk.ps1
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+$cefRoot = .\scripts\ensure-cef-sdk.ps1 | Select-Object -Last 1
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCEFTOD_WITH_CEF=ON -DCEFTOD_CEF_ROOT="$cefRoot"
 cmake --build build --config Release
 ```
 
@@ -96,7 +90,7 @@ build\Release\CeftoDecklink.exe
 
 The visible preview is only `192 x 108`, which is 10% of `1920 x 1080`.
 
-Internally, WebView2 renders the configured page at a full `1920 x 1080` offscreen size. The app captures that frame and draws a scaled copy into the compact preview panel. This avoids the usual embedded-browser problems where a small control shows only the top-left corner or adds scrollbars.
+Internally, CEF renders the configured page at the selected output mode size. The CEF render handler receives BGRA frames, caches the latest image, and a pacing thread submits that latest frame at the selected SDI cadence. The compact preview panel draws the same cached frame.
 
 ## DeckLink Notes
 
@@ -117,7 +111,7 @@ src/core/RenderController.cpp
 
 ## Architecture
 
-Target production pipeline:
+Current pipeline:
 
 ```text
 HTML URL
@@ -127,40 +121,28 @@ HTML URL
 -> SDI
 ```
 
-Current development pipeline:
-
-```text
-HTML URL
--> WebView2 offscreen full-HD preview
--> scaled Win32 preview
-
-Mock frame source
--> mock DeckLink output counters
-```
-
 Important folders:
 
 ```text
-src/app/        Win32 UI and WebView2 preview
+src/app/        Win32 UI
 src/core/       renderer/output interfaces and controller
 src/decklink/   DeckLink enumerator and output adapter
-src/cef/        CEF offscreen renderer adapter
+src/cef/        CEF offscreen renderer
 src/mock/       mock source/output for development without hardware
 docs/           SDK integration notes
 scripts/        build and dependency helper scripts
 ```
 
-## Enabling Real SDK Work
+## Build Switches
 
-The project exposes feature switches for the future production integrations:
+The helper script enables CEF and auto-detects DeckLink by default. Equivalent manual switches:
 
 ```powershell
 cmake -S . -B build `
   -G "Visual Studio 17 2022" -A x64 `
   -DCEFTOD_WITH_CEF=ON `
   -DCEFTOD_CEF_ROOT="C:\SDKs\cef_binary" `
-  -DCEFTOD_WITH_DECKLINK=ON `
-  -DCEFTOD_DECKLINK_SDK_ROOT="C:\SDKs\Blackmagic DeckLink SDK"
+  -DCEFTOD_WITH_DECKLINK=ON
 ```
 
 Detailed notes are in:
@@ -171,10 +153,10 @@ docs\SDK_INTEGRATION.md
 
 ## Troubleshooting
 
-If WebView2 headers are missing, run:
+If CEF headers or `libcef.lib` are missing, run:
 
 ```powershell
-.\scripts\ensure-webview2-sdk.ps1
+.\scripts\ensure-cef-sdk.ps1
 ```
 
 If no DeckLink devices appear:

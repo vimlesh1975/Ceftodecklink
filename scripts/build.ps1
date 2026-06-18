@@ -6,10 +6,26 @@ param(
     [string]$Platform = "x64",
 
     [ValidateSet("Auto", "On", "Off")]
-    [string]$DeckLink = "Auto"
+    [string]$DeckLink = "Auto",
+
+    [ValidateSet("Auto", "On", "Off")]
+    [string]$Cef = "Auto"
 )
 
 $ErrorActionPreference = "Stop"
+
+function Repair-PathEnvironment {
+    $pathValue = [Environment]::GetEnvironmentVariable("PATH", "Process")
+    if (-not $pathValue) {
+        $pathValue = [Environment]::GetEnvironmentVariable("Path", "Process")
+    }
+
+    [Environment]::SetEnvironmentVariable("PATH", $null, "Process")
+    [Environment]::SetEnvironmentVariable("Path", $null, "Process")
+    [Environment]::SetEnvironmentVariable("Path", $pathValue, "Process")
+}
+
+Repair-PathEnvironment
 
 function Get-VsWherePath {
     $candidates = @(
@@ -117,8 +133,6 @@ if (-not $Generator) {
     $Generator = Get-VisualStudioGenerator -InstallationVersion $vsWithCpp.installationVersion
 }
 
-& (Join-Path $PSScriptRoot "ensure-webview2-sdk.ps1")
-
 $deckLinkApiPath = Get-DeckLinkApiPath
 $deckLinkEnabled = switch ($DeckLink) {
     "On" { "ON" }
@@ -130,12 +144,22 @@ if ($DeckLink -eq "On" -and -not $deckLinkApiPath) {
     throw "DeckLink was requested, but the Blackmagic DeckLink API DLL was not found."
 }
 
-& $cmakePath -S . -B build -G $Generator -A $Platform -DCEFTOD_WITH_DECKLINK=$deckLinkEnabled
+$cefEnabled = switch ($Cef) {
+    "Off" { "OFF" }
+    default { "ON" }
+}
+
+$cefRoot = ""
+if ($cefEnabled -eq "ON") {
+    $cefRoot = & (Join-Path $PSScriptRoot "ensure-cef-sdk.ps1") | Select-Object -Last 1
+}
+
+& $cmakePath -S . -B build -G $Generator -A $Platform -DCEFTOD_WITH_DECKLINK=$deckLinkEnabled -DCEFTOD_WITH_CEF=$cefEnabled -DCEFTOD_CEF_ROOT="$cefRoot"
 if ($LASTEXITCODE -ne 0) {
     throw "CMake configure failed with exit code $LASTEXITCODE."
 }
 
-& $cmakePath --build build --config $Configuration
+& $cmakePath --build build --config $Configuration -- /m:1
 if ($LASTEXITCODE -ne 0) {
     throw "CMake build failed with exit code $LASTEXITCODE."
 }

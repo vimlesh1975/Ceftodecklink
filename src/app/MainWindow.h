@@ -1,6 +1,5 @@
 #pragma once
 
-#include "app/BrowserPreview.h"
 #include "core/RenderController.h"
 #include "decklink/DeckLinkDeviceEnumerator.h"
 
@@ -63,13 +62,10 @@ private:
     HWND backendLabel_ = nullptr;
 
     RECT previewRect_{};
-    RECT browserRect_{};
     std::vector<VideoMode> modes_;
     std::vector<DeckLinkDeviceInfo> deckLinkDevices_;
     std::wstring deckLinkStatus_;
-    bool previewOnlyRunning_ = false;
     DWORD lastStatusUpdateTick_ = 0;
-    std::unique_ptr<BrowserPreview> browserPreview_;
     std::unique_ptr<RenderController> controller_;
 };
 

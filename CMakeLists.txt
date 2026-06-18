@@ -8,15 +8,11 @@ project(CeftoDecklink
 
 option(CEFTOD_WITH_CEF "Use CEF offscreen rendering instead of the mock HTML renderer" OFF)
 option(CEFTOD_WITH_DECKLINK "Use Blackmagic DeckLink SDK output instead of the mock output" OFF)
-option(CEFTOD_WITH_WEBVIEW2_PREVIEW "Show the configured HTML URL in an embedded WebView2 preview" ON)
 
 set(CEFTOD_CEF_ROOT "" CACHE PATH "Path to the CEF binary distribution root")
 set(CEFTOD_DECKLINK_SDK_ROOT "" CACHE PATH "Path to the Blackmagic DeckLink SDK root")
-set(CEFTOD_WEBVIEW2_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview2/sdk" CACHE PATH "Path to the Microsoft.Web.WebView2 NuGet package root")
 
 add_executable(CeftoDecklink WIN32
-    src/app/BrowserPreview.cpp
-    src/app/BrowserPreview.h
     src/main.cpp
     src/app/BackendFactory.cpp
     src/app/BackendFactory.h
@@ -34,8 +30,6 @@ add_executable(CeftoDecklink WIN32
     src/decklink/DeckLinkOutput.h
     src/mock/MockDeckLinkOutput.cpp
     src/mock/MockDeckLinkOutput.h
-    src/mock/MockHtmlRenderer.cpp
-    src/mock/MockHtmlRenderer.h
 )
 
 add_executable(CeftoDecklinkCheck
@@ -75,7 +69,6 @@ target_compile_definitions(CeftoDecklink PRIVATE
     WIN32_LEAN_AND_MEAN
     CEFTOD_WITH_CEF=$<BOOL:${CEFTOD_WITH_CEF}>
     CEFTOD_WITH_DECKLINK=$<BOOL:${CEFTOD_WITH_DECKLINK}>
-    CEFTOD_WITH_WEBVIEW2_PREVIEW=$<BOOL:${CEFTOD_WITH_WEBVIEW2_PREVIEW}>
 )
 target_compile_definitions(CeftoDecklinkCheck PRIVATE
     UNICODE
@@ -92,7 +85,8 @@ target_compile_definitions(CeftoDecklinkOutputSmoke PRIVATE
 )
 
 if(MSVC)
-    target_compile_options(CeftoDecklink PRIVATE /W4 /permissive- /EHsc)
+    target_compile_options(CeftoDecklink PRIVATE /W4 /permissive- /EHsc /FS)
+    set_property(TARGET CeftoDecklink PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(CeftoDecklinkCheck PRIVATE /W4 /permissive- /EHsc)
     target_compile_options(CeftoDecklinkOutputSmoke PRIVATE /W4 /permissive- /EHsc)
 else()
@@ -118,31 +112,42 @@ target_link_libraries(CeftoDecklinkOutputSmoke PRIVATE
     oleaut32
 )
 
-if(CEFTOD_WITH_WEBVIEW2_PREVIEW)
-    set(CEFTOD_WEBVIEW2_INCLUDE "${CEFTOD_WEBVIEW2_ROOT}/build/native/include")
-    set(CEFTOD_WEBVIEW2_LIB "${CEFTOD_WEBVIEW2_ROOT}/build/native/x64/WebView2Loader.dll.lib")
-    set(CEFTOD_WEBVIEW2_DLL "${CEFTOD_WEBVIEW2_ROOT}/build/native/x64/WebView2Loader.dll")
-
-    if(NOT EXISTS "${CEFTOD_WEBVIEW2_INCLUDE}/WebView2.h")
-        message(FATAL_ERROR "WebView2.h not found. Expected: ${CEFTOD_WEBVIEW2_INCLUDE}/WebView2.h")
-    endif()
-
-    if(NOT EXISTS "${CEFTOD_WEBVIEW2_LIB}")
-        message(FATAL_ERROR "WebView2 loader import library not found. Expected: ${CEFTOD_WEBVIEW2_LIB}")
-    endif()
-
-    target_include_directories(CeftoDecklink PRIVATE "${CEFTOD_WEBVIEW2_INCLUDE}")
-    target_link_libraries(CeftoDecklink PRIVATE "${CEFTOD_WEBVIEW2_LIB}")
-
-    add_custom_command(TARGET CeftoDecklink POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CEFTOD_WEBVIEW2_DLL}"
-            "$<TARGET_FILE_DIR:CeftoDecklink>/WebView2Loader.dll"
+if(NOT CEFTOD_WITH_CEF)
+    target_sources(CeftoDecklink PRIVATE
+        src/mock/MockHtmlRenderer.cpp
+        src/mock/MockHtmlRenderer.h
     )
 endif()
 
-if(CEFTOD_WITH_CEF AND NOT CEFTOD_CEF_ROOT)
-    message(WARNING "CEFTOD_WITH_CEF is ON, but CEFTOD_CEF_ROOT is empty. The scaffold will still build the placeholder CEF adapter until real SDK wiring is added.")
+if(CEFTOD_WITH_CEF)
+    if(NOT CEFTOD_CEF_ROOT)
+        message(FATAL_ERROR "CEFTOD_WITH_CEF is ON, but CEFTOD_CEF_ROOT is empty.")
+    endif()
+
+    if(NOT EXISTS "${CEFTOD_CEF_ROOT}/include/cef_app.h")
+        message(FATAL_ERROR "CEF headers not found. Expected: ${CEFTOD_CEF_ROOT}/include/cef_app.h")
+    endif()
+
+    set(USE_SANDBOX OFF CACHE BOOL "Disable CEF sandbox for this app" FORCE)
+    set(USE_ATL OFF CACHE BOOL "Disable ATL for CEF wrapper" FORCE)
+    set(CEF_ROOT "${CEFTOD_CEF_ROOT}")
+    list(APPEND CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
+    find_package(CEF REQUIRED)
+
+    ADD_LOGICAL_TARGET(libcef_lib "${CEF_LIB_RELEASE}" "${CEF_LIB_RELEASE}")
+    add_subdirectory("${CEF_LIBCEF_DLL_WRAPPER_PATH}" "${CMAKE_BINARY_DIR}/libcef_dll_wrapper")
+
+    target_compile_features(CeftoDecklink PRIVATE cxx_std_20)
+    target_include_directories(CeftoDecklink SYSTEM PRIVATE "${CEF_INCLUDE_PATH}")
+    target_compile_definitions(CeftoDecklink PRIVATE __STDC_CONSTANT_MACROS __STDC_FORMAT_MACROS)
+    if(MSVC)
+        target_link_options(CeftoDecklink PRIVATE /STACK:0x800000)
+    endif()
+    target_link_libraries(CeftoDecklink PRIVATE libcef_lib libcef_dll_wrapper ${CEF_STANDARD_LIBS})
+    add_dependencies(CeftoDecklink libcef_dll_wrapper)
+
+    COPY_FILES(CeftoDecklink "${CEF_BINARY_FILES}" "${CEF_BINARY_DIR}" "$<TARGET_FILE_DIR:CeftoDecklink>")
+    COPY_RESOURCES(CeftoDecklink "${CEF_RESOURCE_FILES}" "" "${CEF_RESOURCE_DIR}" "$<TARGET_FILE_DIR:CeftoDecklink>")
 endif()
 
 if(CEFTOD_WITH_DECKLINK AND NOT MSVC)

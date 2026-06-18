@@ -4,13 +4,9 @@
 #include "decklink/DeckLinkDeviceEnumerator.h"
 
 #include <algorithm>
-#include <atomic>
-#include <chrono>
 #include <cwchar>
+#include <cwctype>
 #include <memory>
-#include <sstream>
-#include <thread>
-#include <utility>
 
 namespace ceftod {
 namespace {
@@ -55,124 +51,6 @@ std::wstring FormatCounter(const wchar_t* label, std::uint64_t value) {
     return buffer;
 }
 
-std::shared_ptr<FrameBuffer> MakeWaitingFrame(const VideoMode& mode, std::uint64_t sequence) {
-    auto frame = std::make_shared<FrameBuffer>();
-    frame->width = mode.width;
-    frame->height = mode.height;
-    frame->strideBytes = mode.width * 4;
-    frame->sequence = sequence;
-    frame->timestamp = std::chrono::steady_clock::now();
-    frame->bgra.resize(static_cast<std::size_t>(frame->strideBytes) * frame->height);
-
-    const std::uint8_t bars[][3] = {
-        {255, 255, 255},
-        {0, 255, 255},
-        {255, 255, 0},
-        {0, 255, 0},
-        {255, 0, 255},
-        {0, 0, 255},
-        {255, 0, 0},
-        {0, 0, 0},
-    };
-    constexpr int barCount = static_cast<int>(sizeof(bars) / sizeof(bars[0]));
-
-    for (int y = 0; y < frame->height; ++y) {
-        auto* row = frame->bgra.data() + (static_cast<std::size_t>(y) * frame->strideBytes);
-        for (int x = 0; x < frame->width; ++x) {
-            const int bar = std::min(barCount - 1, (x * barCount) / std::max(1, frame->width));
-            row[x * 4 + 0] = bars[bar][0];
-            row[x * 4 + 1] = bars[bar][1];
-            row[x * 4 + 2] = bars[bar][2];
-            row[x * 4 + 3] = 255;
-        }
-    }
-
-    const int stripeWidth = std::max(12, frame->width / 90);
-    const int stripeX = static_cast<int>((sequence * 11) % static_cast<std::uint64_t>(std::max(1, frame->width)));
-    for (int y = 0; y < frame->height; ++y) {
-        auto* row = frame->bgra.data() + (static_cast<std::size_t>(y) * frame->strideBytes);
-        for (int dx = 0; dx < stripeWidth; ++dx) {
-            const int x = (stripeX + dx) % frame->width;
-            row[x * 4 + 0] = 20;
-            row[x * 4 + 1] = 20;
-            row[x * 4 + 2] = 20;
-            row[x * 4 + 3] = 255;
-        }
-    }
-
-    return frame;
-}
-
-class BrowserPreviewFrameSource final : public IFrameSource {
-public:
-    explicit BrowserPreviewFrameSource(BrowserPreview* preview) : preview_(preview) {
-    }
-
-    ~BrowserPreviewFrameSource() override {
-        Stop();
-    }
-
-    bool Start(const std::wstring& url, const VideoMode& mode, FrameCallback callback, std::wstring* error) override {
-        Stop();
-
-        if (!preview_) {
-            if (error) {
-                *error = L"Browser preview is not available for output.";
-            }
-            return false;
-        }
-
-        running_.store(true);
-        worker_ = std::thread(&BrowserPreviewFrameSource::Run, this, url, mode, std::move(callback));
-        return true;
-    }
-
-    void Stop() override {
-        running_.store(false);
-        if (worker_.joinable()) {
-            worker_.join();
-        }
-    }
-
-    bool IsRunning() const override {
-        return running_.load();
-    }
-
-    std::wstring Name() const override {
-        return L"WebView2 URL frame source";
-    }
-
-private:
-    void Run(std::wstring, VideoMode mode, FrameCallback callback) {
-        const double fps = std::max(1.0, mode.FramesPerSecond());
-        const auto frameDuration = std::chrono::duration<double>(1.0 / fps);
-        auto nextFrameTime = std::chrono::steady_clock::now();
-        std::uint64_t sequence = 0;
-
-        while (running_.load()) {
-            auto frame = preview_->LatestFrame();
-            if (!frame) {
-                frame = MakeWaitingFrame(mode, sequence);
-            }
-
-            callback(frame);
-            ++sequence;
-            nextFrameTime += std::chrono::duration_cast<std::chrono::steady_clock::duration>(frameDuration);
-
-            const auto now = std::chrono::steady_clock::now();
-            if (nextFrameTime < now - std::chrono::milliseconds(200)) {
-                nextFrameTime = now;
-            }
-
-            std::this_thread::sleep_until(nextFrameTime);
-        }
-    }
-
-    BrowserPreview* preview_ = nullptr;
-    std::atomic_bool running_{false};
-    std::thread worker_;
-};
-
 } // namespace
 
 int RunMainWindow(HINSTANCE instance, int showCommand) {
@@ -193,10 +71,6 @@ int RunMainWindow(HINSTANCE instance, int showCommand) {
 MainWindow::MainWindow(HINSTANCE instance) : instance_(instance) {
     modes_ = {
         {L"1080i50 - 1920 x 1080 @ 25", 1920, 1080, 25, 1, true},
-        {L"1080p50 - 1920 x 1080 @ 50", 1920, 1080, 50, 1},
-        {L"1080p25 - 1920 x 1080 @ 25", 1920, 1080, 25, 1},
-        {L"720p50 - 1280 x 720 @ 50", 1280, 720, 50, 1},
-        {L"PAL - 720 x 576 @ 25", 720, 576, 25, 1},
     };
 }
 
@@ -304,7 +178,7 @@ void MainWindow::OnCreate() {
 
     mirrorCheck_ = CreateChild(hwnd_, L"BUTTON", L"Mirror output", WS_TABSTOP | BS_AUTOCHECKBOX, kMirrorCheckId);
     reconnectCheck_ = CreateChild(hwnd_, L"BUTTON", L"Auto reconnect", WS_TABSTOP | BS_AUTOCHECKBOX, kReconnectCheckId);
-    SendMessageW(mirrorCheck_, BM_SETCHECK, BST_CHECKED, 0);
+    SendMessageW(mirrorCheck_, BM_SETCHECK, BST_UNCHECKED, 0);
     SendMessageW(reconnectCheck_, BM_SETCHECK, BST_CHECKED, 0);
 
     startButton_ = CreateChild(hwnd_, L"BUTTON", L"Start Output", WS_TABSTOP | BS_PUSHBUTTON, kStartButtonId);
@@ -329,14 +203,13 @@ void MainWindow::OnCreate() {
     std::wstring backend = L"DeckLink: " + deckLinkStatus_ + L"\r\nSource: " + controller_->SourceName() + L" | Output: " + controller_->OutputName();
     SetWindowTextW(backendLabel_, backend.c_str());
 
-    browserPreview_ = std::make_unique<BrowserPreview>(hwnd_);
-    browserPreview_->Initialize(GetWindowTextString(urlEdit_));
-
     SetTimer(hwnd_, kUiTimer, kUiTimerIntervalMs, nullptr);
 
     RECT client = {};
     GetClientRect(hwnd_, &client);
     LayoutControls(client);
+
+    PostMessageW(hwnd_, WM_COMMAND, MAKEWPARAM(kStartButtonId, BN_CLICKED), reinterpret_cast<LPARAM>(startButton_));
 }
 
 void MainWindow::OnSize() {
@@ -368,11 +241,7 @@ void MainWindow::OnTimer() {
         lastStatusUpdateTick_ = now;
     }
 
-    if (browserPreview_) {
-        browserPreview_->RequestFrame();
-    } else {
-        InvalidateRect(hwnd_, &previewRect_, FALSE);
-    }
+    InvalidateRect(hwnd_, &previewRect_, FALSE);
 }
 
 void MainWindow::OnPaint() {
@@ -435,34 +304,13 @@ void MainWindow::StartOutput() {
     settings.mirrorOutput = SendMessageW(mirrorCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
     settings.autoReconnect = SendMessageW(reconnectCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
     const auto selectedDeckLink = static_cast<int>(SendMessageW(deckLinkCombo_, CB_GETCURSEL, 0, 0));
-    const bool previewOnly = selectedDeckLink == 0;
     const bool realDeckLinkSelected = selectedDeckLink > 0 && selectedDeckLink <= static_cast<int>(deckLinkDevices_.size());
     settings.deckLinkDeviceIndex = realDeckLinkSelected ? selectedDeckLink - 1 : -1;
 
-    if (browserPreview_) {
-        browserPreview_->Navigate(settings.url);
-    }
-
-    if (previewOnly) {
-        previewOnlyRunning_ = true;
-        controller_->Stop();
-        EnableWindow(startButton_, FALSE);
-        EnableWindow(stopButton_, TRUE);
-        SetWindowTextW(statusLabel_, L"Status: Preview only (DeckLink: None)");
-        SetWindowTextW(fpsLabel_, L"FPS: --");
-        SetWindowTextW(framesLabel_, L"Frames: --");
-        SetWindowTextW(dropsLabel_, L"Dropped: --");
-        return;
-    }
-
-    previewOnlyRunning_ = false;
     if (controller_) {
         controller_->Stop();
     }
-    std::unique_ptr<IFrameSource> source = browserPreview_
-        ? std::make_unique<BrowserPreviewFrameSource>(browserPreview_.get())
-        : CreateFrameSource();
-    controller_ = std::make_unique<RenderController>(std::move(source), CreateVideoOutput(realDeckLinkSelected));
+    controller_ = std::make_unique<RenderController>(CreateFrameSource(), CreateVideoOutput(realDeckLinkSelected));
     std::wstring backend = L"DeckLink: " + deckLinkStatus_ + L"\r\nSource: " + controller_->SourceName() + L" | Output: " + controller_->OutputName();
     SetWindowTextW(backendLabel_, backend.c_str());
 
@@ -481,7 +329,6 @@ void MainWindow::StartOutput() {
 }
 
 void MainWindow::StopOutput() {
-    previewOnlyRunning_ = false;
     controller_->Stop();
     EnableWindow(startButton_, TRUE);
     EnableWindow(stopButton_, FALSE);
@@ -491,14 +338,6 @@ void MainWindow::StopOutput() {
 }
 
 void MainWindow::UpdateStatusLabels() {
-    if (previewOnlyRunning_) {
-        SetWindowTextW(statusLabel_, L"Status: Preview only (DeckLink: None)");
-        SetWindowTextW(fpsLabel_, L"FPS: --");
-        SetWindowTextW(framesLabel_, L"Frames: --");
-        SetWindowTextW(dropsLabel_, L"Dropped: --");
-        return;
-    }
-
     if (!controller_) {
         return;
     }
@@ -527,16 +366,26 @@ void MainWindow::RefreshDeckLinkDevices() {
     deckLinkDevices_ = result.devices;
     deckLinkStatus_ = result.status;
 
+    int defaultSelection = 0;
     for (const auto& device : deckLinkDevices_) {
         std::wstring label = !device.displayName.empty() ? device.displayName : device.modelName;
         if (label.empty()) {
             label = L"DeckLink device";
         }
         SendMessageW(deckLinkCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+
+        const int selection = static_cast<int>(SendMessageW(deckLinkCombo_, CB_GETCOUNT, 0, 0)) - 1;
+        std::wstring lowerLabel = label;
+        std::transform(lowerLabel.begin(), lowerLabel.end(), lowerLabel.begin(), [](wchar_t c) {
+            return static_cast<wchar_t>(std::towlower(c));
+        });
+        if (defaultSelection == 0 || lowerLabel.find(L"4k") != std::wstring::npos) {
+            defaultSelection = selection;
+        }
     }
 
     SendMessageW(deckLinkCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Mock DeckLink Output"));
-    SendMessageW(deckLinkCombo_, CB_SETCURSEL, 0, 0);
+    SendMessageW(deckLinkCombo_, CB_SETCURSEL, defaultSelection, 0);
 }
 
 void MainWindow::LayoutControls(const RECT& clientRect) {
@@ -587,16 +436,6 @@ void MainWindow::LayoutControls(const RECT& clientRect) {
     previewRect_.top = margin;
     previewRect_.right = previewRect_.left + kCompactPreviewWidth + 32;
     previewRect_.bottom = previewRect_.top + kCompactPreviewHeight + 64;
-
-    browserRect_ = previewRect_;
-    browserRect_.left += 16;
-    browserRect_.top += 48;
-    browserRect_.right = browserRect_.left + kCompactPreviewWidth;
-    browserRect_.bottom = browserRect_.top + kCompactPreviewHeight;
-
-    if (browserPreview_) {
-        browserPreview_->Resize(browserRect_);
-    }
 }
 
 void MainWindow::DrawPreview(HDC dc, const RECT&) {
@@ -620,18 +459,6 @@ void MainWindow::DrawPreview(HDC dc, const RECT&) {
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(222, 228, 235));
     DrawTextW(dc, L"Live Preview - 192 x 108", -1, &titleRect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-
-    if (browserPreview_) {
-        if (browserPreview_->DrawFrame(dc, browserRect_)) {
-            return;
-        }
-
-        RECT messageRect = browserRect_;
-        SetTextColor(dc, browserPreview_->Failed() ? RGB(236, 120, 120) : RGB(156, 164, 174));
-        const auto status = browserPreview_->IsReady() ? std::wstring(L"Waiting for preview frame") : browserPreview_->Status();
-        DrawTextW(dc, status.c_str(), -1, &messageRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        return;
-    }
 
     auto frame = controller_ ? controller_->GetLatestFrame() : nullptr;
     if (!frame || frame->bgra.empty()) {
