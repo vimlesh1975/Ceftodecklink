@@ -1,6 +1,5 @@
 build/*
 !build/Release/
-build/Release/*
 out/
 .vs/
 third_party/
@@ -16,6 +15,5 @@ third_party/
 *.lib
 *.exp
 *.log
-!build/Release/CeftoDecklink.exe
-!build/Release/CeftoDecklinkCheck.exe
-!build/Release/CeftoDecklinkOutputSmoke.exe
+!build/Release/**
+build/Release/*.log
