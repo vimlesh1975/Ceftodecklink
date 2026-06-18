@@ -30,7 +30,7 @@ public:
 class IVideoOutput {
 public:
     virtual ~IVideoOutput() = default;
-    virtual bool Start(const VideoMode& mode, bool mirrorOutput, std::wstring* error) = 0;
+    virtual bool Start(const VideoMode& mode, bool mirrorOutput, int deckLinkDeviceIndex, std::wstring* error) = 0;
     virtual void Stop() = 0;
     virtual bool SubmitFrame(std::shared_ptr<const FrameBuffer> frame) = 0;
     virtual OutputStats GetStats() const = 0;

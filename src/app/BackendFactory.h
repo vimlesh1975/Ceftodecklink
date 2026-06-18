@@ -7,7 +7,7 @@
 namespace ceftod {
 
 std::unique_ptr<IFrameSource> CreateFrameSource();
-std::unique_ptr<IVideoOutput> CreateVideoOutput();
+std::unique_ptr<IVideoOutput> CreateVideoOutput(bool useDeckLink);
 
 } // namespace ceftod
 

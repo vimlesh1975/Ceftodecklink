@@ -15,12 +15,12 @@ std::unique_ptr<IFrameSource> CreateFrameSource() {
 #endif
 }
 
-std::unique_ptr<IVideoOutput> CreateVideoOutput() {
-#if CEFTOD_WITH_DECKLINK
-    return CreateDeckLinkOutput();
-#else
+std::unique_ptr<IVideoOutput> CreateVideoOutput(bool useDeckLink) {
+    if (useDeckLink) {
+        return CreateDeckLinkOutput();
+    }
+
     return std::make_unique<MockDeckLinkOutput>();
-#endif
 }
 
 } // namespace ceftod

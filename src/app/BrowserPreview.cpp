@@ -1,6 +1,8 @@
 #include "app/BrowserPreview.h"
 
+#include <chrono>
 #include <cwchar>
+#include <cstring>
 #include <string>
 #include <utility>
 
@@ -157,6 +159,7 @@ BrowserPreview::~BrowserPreview() {
     if (frameBitmap_) {
         DeleteObject(frameBitmap_);
         frameBitmap_ = nullptr;
+        frameBits_ = nullptr;
     }
     if (renderHost_) {
         DestroyWindow(renderHost_);
@@ -373,6 +376,15 @@ std::wstring BrowserPreview::Status() const {
     return status_;
 }
 
+std::shared_ptr<const FrameBuffer> BrowserPreview::LatestFrame() const {
+#if CEFTOD_WITH_WEBVIEW2_PREVIEW
+    std::lock_guard<std::mutex> lock(frameMutex_);
+    return latestFrame_;
+#else
+    return nullptr;
+#endif
+}
+
 void BrowserPreview::SetStatus(std::wstring status) {
     status_ = std::move(status);
 }
@@ -386,15 +398,16 @@ bool BrowserPreview::UpdateFrameFromStream(IStream* stream) {
     LARGE_INTEGER zero = {};
     stream->Seek(zero, STREAM_SEEK_SET, nullptr);
 
-    Microsoft::WRL::ComPtr<IWICImagingFactory> factory;
-    HRESULT result = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
-    if (FAILED(result)) {
-        SetStatus(L"WIC startup failed: " + HResultText(result));
-        return false;
+    if (!wicFactory_) {
+        HRESULT result = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wicFactory_));
+        if (FAILED(result)) {
+            SetStatus(L"WIC startup failed: " + HResultText(result));
+            return false;
+        }
     }
 
     Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
-    result = factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnLoad, &decoder);
+    HRESULT result = wicFactory_->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnLoad, &decoder);
     if (FAILED(result)) {
         SetStatus(L"Preview image decode failed: " + HResultText(result));
         return false;
@@ -408,7 +421,7 @@ bool BrowserPreview::UpdateFrameFromStream(IStream* stream) {
     }
 
     Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
-    result = factory->CreateFormatConverter(&converter);
+    result = wicFactory_->CreateFormatConverter(&converter);
     if (FAILED(result)) {
         SetStatus(L"Preview image converter failed: " + HResultText(result));
         return false;
@@ -416,7 +429,7 @@ bool BrowserPreview::UpdateFrameFromStream(IStream* stream) {
 
     result = converter->Initialize(
         frame.Get(),
-        GUID_WICPixelFormat32bppPBGRA,
+        GUID_WICPixelFormat32bppBGRA,
         WICBitmapDitherTypeNone,
         nullptr,
         0.0,
@@ -442,31 +455,56 @@ bool BrowserPreview::UpdateFrameFromStream(IStream* stream) {
     bitmapInfo.bmiHeader.biBitCount = 32;
     bitmapInfo.bmiHeader.biCompression = BI_RGB;
 
-    void* bits = nullptr;
-    HBITMAP bitmap = CreateDIBSection(nullptr, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (!bitmap || !bits) {
-        if (bitmap) {
-            DeleteObject(bitmap);
+    HBITMAP newBitmap = nullptr;
+    void* newBits = nullptr;
+    if (!frameBitmap_ || frameWidth_ != width || frameHeight_ != height || !frameBits_) {
+        newBitmap = CreateDIBSection(nullptr, &bitmapInfo, DIB_RGB_COLORS, &newBits, nullptr, 0);
+        if (!newBitmap || !newBits) {
+            if (newBitmap) {
+                DeleteObject(newBitmap);
+            }
+            SetStatus(L"Preview bitmap allocation failed");
+            return false;
         }
-        SetStatus(L"Preview bitmap allocation failed");
-        return false;
     }
 
     const UINT stride = width * 4;
     const UINT imageSize = stride * height;
-    result = converter->CopyPixels(nullptr, stride, imageSize, static_cast<BYTE*>(bits));
+
+    auto capturedFrame = std::make_shared<FrameBuffer>();
+    capturedFrame->width = static_cast<int>(width);
+    capturedFrame->height = static_cast<int>(height);
+    capturedFrame->strideBytes = static_cast<int>(stride);
+    capturedFrame->timestamp = std::chrono::steady_clock::now();
+    capturedFrame->bgra.resize(imageSize);
+
+    result = converter->CopyPixels(nullptr, stride, imageSize, capturedFrame->bgra.data());
     if (FAILED(result)) {
-        DeleteObject(bitmap);
+        if (newBitmap) {
+            DeleteObject(newBitmap);
+        }
         SetStatus(L"Preview bitmap copy failed: " + HResultText(result));
         return false;
     }
 
-    if (frameBitmap_) {
-        DeleteObject(frameBitmap_);
+    if (newBitmap) {
+        if (frameBitmap_) {
+            DeleteObject(frameBitmap_);
+        }
+        frameBitmap_ = newBitmap;
+        frameBits_ = newBits;
+        frameWidth_ = width;
+        frameHeight_ = height;
     }
-    frameBitmap_ = bitmap;
-    frameWidth_ = width;
-    frameHeight_ = height;
+
+    if (frameBits_) {
+        std::memcpy(frameBits_, capturedFrame->bgra.data(), imageSize);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(frameMutex_);
+        latestFrame_ = std::move(capturedFrame);
+    }
     SetStatus(L"Browser preview rendering 1920x1080 and drawing compact preview");
     return true;
 }

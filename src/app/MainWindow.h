@@ -68,6 +68,7 @@ private:
     std::vector<DeckLinkDeviceInfo> deckLinkDevices_;
     std::wstring deckLinkStatus_;
     bool previewOnlyRunning_ = false;
+    DWORD lastStatusUpdateTick_ = 0;
     std::unique_ptr<BrowserPreview> browserPreview_;
     std::unique_ptr<RenderController> controller_;
 };

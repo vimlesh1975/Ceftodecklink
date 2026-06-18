@@ -13,6 +13,7 @@ namespace ceftod {
 struct RenderSettings {
     std::wstring url;
     VideoMode mode;
+    int deckLinkDeviceIndex = -1;
     bool mirrorOutput = true;
     bool autoReconnect = true;
 };

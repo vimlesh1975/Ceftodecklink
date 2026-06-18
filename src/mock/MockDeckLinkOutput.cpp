@@ -4,7 +4,7 @@
 
 namespace ceftod {
 
-bool MockDeckLinkOutput::Start(const VideoMode& mode, bool mirrorOutput, std::wstring*) {
+bool MockDeckLinkOutput::Start(const VideoMode& mode, bool mirrorOutput, int, std::wstring*) {
     std::lock_guard<std::mutex> lock(mutex_);
     mode_ = mode;
     mirrorOutput_ = mirrorOutput;

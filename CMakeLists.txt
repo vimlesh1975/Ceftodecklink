@@ -38,9 +38,33 @@ add_executable(CeftoDecklink WIN32
     src/mock/MockHtmlRenderer.h
 )
 
+add_executable(CeftoDecklinkCheck
+    src/tools/DeckLinkDeviceCheck.cpp
+    src/decklink/DeckLinkDeviceEnumerator.cpp
+    src/decklink/DeckLinkDeviceEnumerator.h
+)
+
+add_executable(CeftoDecklinkOutputSmoke
+    src/tools/DeckLinkOutputSmoke.cpp
+    src/decklink/DeckLinkOutput.cpp
+    src/decklink/DeckLinkOutput.h
+    src/mock/MockHtmlRenderer.cpp
+    src/mock/MockHtmlRenderer.h
+    src/core/Frame.h
+    src/core/RendererInterfaces.h
+)
+
 target_compile_features(CeftoDecklink PRIVATE cxx_std_17)
+target_compile_features(CeftoDecklinkCheck PRIVATE cxx_std_17)
+target_compile_features(CeftoDecklinkOutputSmoke PRIVATE cxx_std_17)
 
 target_include_directories(CeftoDecklink PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_include_directories(CeftoDecklinkCheck PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_include_directories(CeftoDecklinkOutputSmoke PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
@@ -53,11 +77,28 @@ target_compile_definitions(CeftoDecklink PRIVATE
     CEFTOD_WITH_DECKLINK=$<BOOL:${CEFTOD_WITH_DECKLINK}>
     CEFTOD_WITH_WEBVIEW2_PREVIEW=$<BOOL:${CEFTOD_WITH_WEBVIEW2_PREVIEW}>
 )
+target_compile_definitions(CeftoDecklinkCheck PRIVATE
+    UNICODE
+    _UNICODE
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN
+)
+target_compile_definitions(CeftoDecklinkOutputSmoke PRIVATE
+    UNICODE
+    _UNICODE
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN
+    CEFTOD_WITH_DECKLINK=$<BOOL:${CEFTOD_WITH_DECKLINK}>
+)
 
 if(MSVC)
     target_compile_options(CeftoDecklink PRIVATE /W4 /permissive- /EHsc)
+    target_compile_options(CeftoDecklinkCheck PRIVATE /W4 /permissive- /EHsc)
+    target_compile_options(CeftoDecklinkOutputSmoke PRIVATE /W4 /permissive- /EHsc)
 else()
     target_compile_options(CeftoDecklink PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(CeftoDecklinkCheck PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(CeftoDecklinkOutputSmoke PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 target_link_libraries(CeftoDecklink PRIVATE
@@ -66,6 +107,14 @@ target_link_libraries(CeftoDecklink PRIVATE
     ole32
     oleaut32
     windowscodecs
+)
+target_link_libraries(CeftoDecklinkCheck PRIVATE
+    ole32
+    oleaut32
+)
+target_link_libraries(CeftoDecklinkOutputSmoke PRIVATE
+    ole32
+    oleaut32
 )
 
 if(CEFTOD_WITH_WEBVIEW2_PREVIEW)
@@ -95,6 +144,6 @@ if(CEFTOD_WITH_CEF AND NOT CEFTOD_CEF_ROOT)
     message(WARNING "CEFTOD_WITH_CEF is ON, but CEFTOD_CEF_ROOT is empty. The scaffold will still build the placeholder CEF adapter until real SDK wiring is added.")
 endif()
 
-if(CEFTOD_WITH_DECKLINK AND NOT CEFTOD_DECKLINK_SDK_ROOT)
-    message(WARNING "CEFTOD_WITH_DECKLINK is ON, but CEFTOD_DECKLINK_SDK_ROOT is empty. The scaffold will still build the placeholder DeckLink adapter until real SDK wiring is added.")
+if(CEFTOD_WITH_DECKLINK AND NOT MSVC)
+    message(WARNING "CEFTOD_WITH_DECKLINK currently requires MSVC because the DeckLink COM declarations are imported from the registered Blackmagic type library.")
 endif()

@@ -36,7 +36,9 @@ if (Test-Path -LiteralPath $sdkRoot) {
 }
 
 New-Item -ItemType Directory -Force -Path $sdkRoot | Out-Null
-Expand-Archive -LiteralPath $packageFile -DestinationPath $sdkRoot -Force
+$zipPackageFile = Join-Path $packageRoot "Microsoft.Web.WebView2.$Version.zip"
+Copy-Item -LiteralPath $packageFile -Destination $zipPackageFile -Force
+Expand-Archive -LiteralPath $zipPackageFile -DestinationPath $sdkRoot -Force
 
 if (-not ((Test-Path -LiteralPath $headerPath) -and (Test-Path -LiteralPath $loaderLibPath))) {
     throw "WebView2 SDK download did not contain the expected native files."

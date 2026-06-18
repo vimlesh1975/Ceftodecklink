@@ -16,7 +16,7 @@ bool RenderController::Start(const RenderSettings& settings, std::wstring* error
     Stop();
     settings_ = settings;
 
-    if (!output_->Start(settings.mode, settings.mirrorOutput, error)) {
+    if (!output_->Start(settings.mode, settings.mirrorOutput, settings.deckLinkDeviceIndex, error)) {
         return false;
     }
 

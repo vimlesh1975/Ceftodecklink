@@ -13,6 +13,7 @@ struct VideoMode {
     int height = 1080;
     int fpsNumerator = 50;
     int fpsDenominator = 1;
+    bool interlaced = false;
 
     double FramesPerSecond() const {
         return fpsDenominator == 0 ? 0.0 : static_cast<double>(fpsNumerator) / fpsDenominator;

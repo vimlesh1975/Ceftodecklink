@@ -9,7 +9,7 @@ namespace ceftod {
 
 class MockDeckLinkOutput final : public IVideoOutput {
 public:
-    bool Start(const VideoMode& mode, bool mirrorOutput, std::wstring* error) override;
+    bool Start(const VideoMode& mode, bool mirrorOutput, int deckLinkDeviceIndex, std::wstring* error) override;
     void Stop() override;
     bool SubmitFrame(std::shared_ptr<const FrameBuffer> frame) override;
     OutputStats GetStats() const override;

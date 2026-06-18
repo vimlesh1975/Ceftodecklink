@@ -1,12 +1,16 @@
 #pragma once
 
+#include "core/Frame.h"
+
 #include <memory>
+#include <mutex>
 #include <string>
 #include <windows.h>
 
 #if CEFTOD_WITH_WEBVIEW2_PREVIEW
 #include <unknwn.h>
 #include <WebView2.h>
+#include <wincodec.h>
 #include <wrl.h>
 #endif
 
@@ -27,6 +31,7 @@ public:
     bool DrawFrame(HDC dc, const RECT& targetBounds) const;
     bool IsReady() const;
     bool Failed() const;
+    std::shared_ptr<const FrameBuffer> LatestFrame() const;
     std::wstring Status() const;
 
 private:
@@ -46,9 +51,13 @@ private:
     Microsoft::WRL::ComPtr<ICoreWebView2Environment> environment_;
     Microsoft::WRL::ComPtr<ICoreWebView2Controller> controller_;
     Microsoft::WRL::ComPtr<ICoreWebView2> webview_;
+    Microsoft::WRL::ComPtr<IWICImagingFactory> wicFactory_;
     HBITMAP frameBitmap_ = nullptr;
+    void* frameBits_ = nullptr;
     UINT frameWidth_ = 0;
     UINT frameHeight_ = 0;
+    mutable std::mutex frameMutex_;
+    std::shared_ptr<const FrameBuffer> latestFrame_;
     bool captureInFlight_ = false;
     std::shared_ptr<bool> aliveFlag_ = std::make_shared<bool>(true);
 #endif
