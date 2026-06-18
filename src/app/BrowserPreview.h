@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 #include <windows.h>
 
 #if CEFTOD_WITH_WEBVIEW2_PREVIEW
@@ -46,11 +47,17 @@ private:
 
 #if CEFTOD_WITH_WEBVIEW2_PREVIEW
     bool UpdateFrameFromStream(IStream* stream);
+    bool UpdateFrameFromEncodedBytes(const std::vector<std::uint8_t>& bytes);
+    void InitializeScreencast();
+    void StartScreencast();
+    void StopScreencast();
+    void HandleScreencastFrame(const std::wstring& eventJson);
 
     HWND renderHost_ = nullptr;
     Microsoft::WRL::ComPtr<ICoreWebView2Environment> environment_;
     Microsoft::WRL::ComPtr<ICoreWebView2Controller> controller_;
     Microsoft::WRL::ComPtr<ICoreWebView2> webview_;
+    Microsoft::WRL::ComPtr<ICoreWebView2DevToolsProtocolEventReceiver> screencastReceiver_;
     Microsoft::WRL::ComPtr<IWICImagingFactory> wicFactory_;
     HBITMAP frameBitmap_ = nullptr;
     void* frameBits_ = nullptr;
@@ -59,6 +66,9 @@ private:
     mutable std::mutex frameMutex_;
     std::shared_ptr<const FrameBuffer> latestFrame_;
     bool captureInFlight_ = false;
+    bool screencastActive_ = false;
+    bool screencastFrameInFlight_ = false;
+    EventRegistrationToken screencastToken_{};
     std::shared_ptr<bool> aliveFlag_ = std::make_shared<bool>(true);
 #endif
 };

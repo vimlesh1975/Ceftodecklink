@@ -2,11 +2,14 @@
 
 #include <chrono>
 #include <cwchar>
+#include <cwctype>
 #include <cstring>
+#include <cstdlib>
 #include <string>
 #include <utility>
 
 #if CEFTOD_WITH_WEBVIEW2_PREVIEW
+#include <wincrypt.h>
 #include <unknwn.h>
 #include <WebView2.h>
 #include <wincodec.h>
@@ -141,6 +144,79 @@ HWND CreateOffscreenRenderHost(HWND owner) {
 
     return host;
 }
+
+std::wstring ExtractJsonString(const std::wstring& json, const std::wstring& key) {
+    const std::wstring pattern = L"\"" + key + L"\"";
+    std::size_t position = json.find(pattern);
+    if (position == std::wstring::npos) {
+        return {};
+    }
+
+    position = json.find(L':', position + pattern.size());
+    if (position == std::wstring::npos) {
+        return {};
+    }
+
+    position = json.find(L'"', position + 1);
+    if (position == std::wstring::npos) {
+        return {};
+    }
+
+    ++position;
+    std::wstring value;
+    value.reserve(1024);
+    for (; position < json.size(); ++position) {
+        const wchar_t ch = json[position];
+        if (ch == L'"') {
+            return value;
+        }
+        if (ch == L'\\' && position + 1 < json.size()) {
+            ++position;
+            value.push_back(json[position]);
+            continue;
+        }
+        value.push_back(ch);
+    }
+
+    return {};
+}
+
+int ExtractJsonInt(const std::wstring& json, const std::wstring& key, int fallback) {
+    const std::wstring pattern = L"\"" + key + L"\"";
+    std::size_t position = json.find(pattern);
+    if (position == std::wstring::npos) {
+        return fallback;
+    }
+
+    position = json.find(L':', position + pattern.size());
+    if (position == std::wstring::npos) {
+        return fallback;
+    }
+
+    ++position;
+    while (position < json.size() && iswspace(json[position])) {
+        ++position;
+    }
+
+    wchar_t* end = nullptr;
+    const long value = std::wcstol(json.c_str() + position, &end, 10);
+    return end && end != json.c_str() + position ? static_cast<int>(value) : fallback;
+}
+
+std::vector<std::uint8_t> DecodeBase64(const std::wstring& text) {
+    DWORD byteCount = 0;
+    if (!CryptStringToBinaryW(text.c_str(), static_cast<DWORD>(text.size()), CRYPT_STRING_BASE64, nullptr, &byteCount, nullptr, nullptr) || byteCount == 0) {
+        return {};
+    }
+
+    std::vector<std::uint8_t> bytes(byteCount);
+    if (!CryptStringToBinaryW(text.c_str(), static_cast<DWORD>(text.size()), CRYPT_STRING_BASE64, bytes.data(), &byteCount, nullptr, nullptr)) {
+        return {};
+    }
+
+    bytes.resize(byteCount);
+    return bytes;
+}
 #endif
 
 } // namespace
@@ -153,6 +229,7 @@ BrowserPreview::~BrowserPreview() {
     if (aliveFlag_) {
         *aliveFlag_ = false;
     }
+    StopScreencast();
     if (controller_) {
         controller_->Close();
     }
@@ -237,6 +314,7 @@ void BrowserPreview::Initialize(const std::wstring& initialUrl) {
                             }
 
                             Navigate(pendingUrl_);
+                            InitializeScreencast();
                             SetStatus(L"Browser preview rendering 1920x1080 and drawing compact preview");
                             return S_OK;
                         })
@@ -275,6 +353,10 @@ void BrowserPreview::Resize(const RECT& bounds) {
 
 void BrowserPreview::RequestFrame() {
 #if CEFTOD_WITH_WEBVIEW2_PREVIEW
+    if (screencastActive_) {
+        return;
+    }
+
     if (!webview_ || captureInFlight_) {
         return;
     }
@@ -390,6 +472,194 @@ void BrowserPreview::SetStatus(std::wstring status) {
 }
 
 #if CEFTOD_WITH_WEBVIEW2_PREVIEW
+void BrowserPreview::InitializeScreencast() {
+    if (!webview_ || screencastReceiver_) {
+        return;
+    }
+
+    HRESULT result = webview_->GetDevToolsProtocolEventReceiver(L"Page.screencastFrame", &screencastReceiver_);
+    if (FAILED(result) || !screencastReceiver_) {
+        SetStatus(L"DevTools screencast unavailable: " + HResultText(result));
+        return;
+    }
+
+    auto aliveFlag = aliveFlag_;
+    result = screencastReceiver_->add_DevToolsProtocolEventReceived(
+        Microsoft::WRL::Callback<ICoreWebView2DevToolsProtocolEventReceivedEventHandler>(
+            [this, aliveFlag](ICoreWebView2*, ICoreWebView2DevToolsProtocolEventReceivedEventArgs* args) -> HRESULT {
+                if (!aliveFlag || !*aliveFlag || !args) {
+                    return S_OK;
+                }
+
+                LPWSTR json = nullptr;
+                if (SUCCEEDED(args->get_ParameterObjectAsJson(&json)) && json) {
+                    HandleScreencastFrame(json);
+                    CoTaskMemFree(json);
+                }
+                return S_OK;
+            })
+            .Get(),
+        &screencastToken_);
+
+    if (FAILED(result)) {
+        screencastReceiver_.Reset();
+        SetStatus(L"DevTools screencast event failed: " + HResultText(result));
+        return;
+    }
+
+    webview_->CallDevToolsProtocolMethod(
+        L"Page.enable",
+        L"{}",
+        Microsoft::WRL::Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
+            [this, aliveFlag](HRESULT errorCode, LPCWSTR) -> HRESULT {
+                if (!aliveFlag || !*aliveFlag) {
+                    return S_OK;
+                }
+
+                if (FAILED(errorCode)) {
+                    SetStatus(L"DevTools Page.enable failed: " + HResultText(errorCode));
+                    return S_OK;
+                }
+
+                StartScreencast();
+                return S_OK;
+            })
+            .Get());
+}
+
+void BrowserPreview::StartScreencast() {
+    if (!webview_ || screencastActive_) {
+        return;
+    }
+
+    constexpr wchar_t parameters[] = LR"JSON({
+        "format": "jpeg",
+        "quality": 80,
+        "maxWidth": 1920,
+        "maxHeight": 1080,
+        "everyNthFrame": 1
+    })JSON";
+
+    auto aliveFlag = aliveFlag_;
+    const HRESULT result = webview_->CallDevToolsProtocolMethod(
+        L"Page.startScreencast",
+        parameters,
+        Microsoft::WRL::Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
+            [this, aliveFlag](HRESULT errorCode, LPCWSTR) -> HRESULT {
+                if (!aliveFlag || !*aliveFlag) {
+                    return S_OK;
+                }
+
+                if (FAILED(errorCode)) {
+                    screencastActive_ = false;
+                    SetStatus(L"DevTools screencast start failed: " + HResultText(errorCode));
+                    return S_OK;
+                }
+
+                screencastActive_ = true;
+                SetStatus(L"Browser preview streaming frames through DevTools screencast");
+                return S_OK;
+            })
+            .Get());
+
+    if (FAILED(result)) {
+        screencastActive_ = false;
+        SetStatus(L"DevTools screencast request failed: " + HResultText(result));
+    }
+}
+
+void BrowserPreview::StopScreencast() {
+    screencastActive_ = false;
+
+    if (webview_) {
+        webview_->CallDevToolsProtocolMethod(
+            L"Page.stopScreencast",
+            L"{}",
+            Microsoft::WRL::Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
+                [](HRESULT, LPCWSTR) -> HRESULT {
+                    return S_OK;
+                })
+                .Get());
+    }
+
+    if (screencastReceiver_) {
+        screencastReceiver_->remove_DevToolsProtocolEventReceived(screencastToken_);
+        screencastReceiver_.Reset();
+    }
+}
+
+void BrowserPreview::HandleScreencastFrame(const std::wstring& eventJson) {
+    if (!webview_) {
+        return;
+    }
+
+    const int sessionId = ExtractJsonInt(eventJson, L"sessionId", -1);
+    if (sessionId >= 0) {
+        wchar_t ackJson[64] = {};
+        std::swprintf(ackJson, sizeof(ackJson) / sizeof(ackJson[0]), L"{\"sessionId\":%d}", sessionId);
+        webview_->CallDevToolsProtocolMethod(
+            L"Page.screencastFrameAck",
+            ackJson,
+            Microsoft::WRL::Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
+                [](HRESULT, LPCWSTR) -> HRESULT {
+                    return S_OK;
+                })
+                .Get());
+    }
+
+    if (screencastFrameInFlight_) {
+        return;
+    }
+
+    const auto data = ExtractJsonString(eventJson, L"data");
+    if (data.empty()) {
+        return;
+    }
+
+    auto bytes = DecodeBase64(data);
+    if (bytes.empty()) {
+        return;
+    }
+
+    screencastFrameInFlight_ = true;
+    if (UpdateFrameFromEncodedBytes(bytes)) {
+        InvalidateRect(parent_, &bounds_, FALSE);
+    }
+    screencastFrameInFlight_ = false;
+}
+
+bool BrowserPreview::UpdateFrameFromEncodedBytes(const std::vector<std::uint8_t>& bytes) {
+    if (bytes.empty()) {
+        return false;
+    }
+
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes.size());
+    if (!memory) {
+        SetStatus(L"Screencast frame allocation failed");
+        return false;
+    }
+
+    void* target = GlobalLock(memory);
+    if (!target) {
+        GlobalFree(memory);
+        SetStatus(L"Screencast frame lock failed");
+        return false;
+    }
+
+    std::memcpy(target, bytes.data(), bytes.size());
+    GlobalUnlock(memory);
+
+    Microsoft::WRL::ComPtr<IStream> stream;
+    HRESULT result = CreateStreamOnHGlobal(memory, TRUE, &stream);
+    if (FAILED(result)) {
+        GlobalFree(memory);
+        SetStatus(L"Screencast stream failed: " + HResultText(result));
+        return false;
+    }
+
+    return UpdateFrameFromStream(stream.Get());
+}
+
 bool BrowserPreview::UpdateFrameFromStream(IStream* stream) {
     if (!stream) {
         return false;

@@ -107,6 +107,7 @@ target_link_libraries(CeftoDecklink PRIVATE
     ole32
     oleaut32
     windowscodecs
+    crypt32
 )
 target_link_libraries(CeftoDecklinkCheck PRIVATE
     ole32
