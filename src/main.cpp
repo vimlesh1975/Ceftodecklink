@@ -18,6 +18,9 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int showCommand) {
 
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const int result = ceftod::RunMainWindow(instance, showCommand);
+#if CEFTOD_WITH_CEF
+    ceftod::ShutdownCefForProcess();
+#endif
     CoUninitialize();
     return result;
 }

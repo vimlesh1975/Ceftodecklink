@@ -177,8 +177,14 @@ void ReleaseCef() {
         return;
     }
 
-    --g_cefUseCount;
     if (g_cefUseCount > 0) {
+        --g_cefUseCount;
+    }
+}
+
+void ShutdownCefIfIdle() {
+    std::lock_guard<std::mutex> lock(g_cefMutex);
+    if (!g_cefInitialized || g_cefUseCount > 0) {
         return;
     }
 
@@ -308,7 +314,7 @@ public:
     void WaitForClose() {
         std::unique_lock<std::mutex> lock(browserMutex_);
         browserClosedCondition_.wait_for(lock, std::chrono::seconds(4), [this] {
-            return browserClosed_ || browser_ == nullptr;
+            return browserClosed_;
         });
     }
 
@@ -324,7 +330,7 @@ private:
     mutable std::mutex browserMutex_;
     std::condition_variable browserClosedCondition_;
     CefRefPtr<CefBrowser> browser_;
-    bool browserClosed_ = true;
+    bool browserClosed_ = false;
 
     mutable std::mutex statusMutex_;
     std::wstring lastError_;
@@ -477,6 +483,10 @@ public:
 #if CEFTOD_WITH_CEF
 CefRefPtr<CefApp> CreateCefApplication() {
     return new CeftoCefApp();
+}
+
+void ShutdownCefForProcess() {
+    ShutdownCefIfIdle();
 }
 #endif
 

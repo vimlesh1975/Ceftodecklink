@@ -12,6 +12,7 @@ namespace ceftod {
 
 #if CEFTOD_WITH_CEF
 CefRefPtr<CefApp> CreateCefApplication();
+void ShutdownCefForProcess();
 #endif
 
 std::unique_ptr<IFrameSource> CreateCefOffscreenRenderer();
