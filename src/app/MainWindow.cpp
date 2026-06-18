@@ -22,8 +22,8 @@ constexpr int kMirrorCheckId = 1004;
 constexpr int kReconnectCheckId = 1005;
 constexpr int kStartButtonId = 1006;
 constexpr int kStopButtonId = 1007;
-constexpr int kCompactPreviewWidth = 192;
-constexpr int kCompactPreviewHeight = 108;
+constexpr int kMinimumPreviewWidth = 420;
+constexpr int kMinimumPreviewHeight = 236;
 
 HWND CreateChild(HWND parent, const wchar_t* className, const wchar_t* text, DWORD style, int id) {
     return CreateWindowExW(
@@ -97,8 +97,8 @@ bool MainWindow::Create(int showCommand) {
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
+        1120,
         720,
-        520,
         nullptr,
         nullptr,
         instance_,
@@ -392,6 +392,7 @@ void MainWindow::LayoutControls(const RECT& clientRect) {
     const int rowHeight = 28;
     const int gap = 10;
     const int clientWidth = static_cast<int>(clientRect.right - clientRect.left);
+    const int clientHeight = static_cast<int>(clientRect.bottom - clientRect.top);
     const int panelWidth = std::min(420, std::max(320, clientWidth / 3));
     int y = margin;
 
@@ -430,13 +431,17 @@ void MainWindow::LayoutControls(const RECT& clientRect) {
     y += rowHeight + gap;
     MoveWindow(backendLabel_, margin, y, panelWidth - (margin * 2), 72, TRUE);
 
-    previewRect_.left = panelWidth + margin;
-    previewRect_.top = margin;
-    previewRect_.right = previewRect_.left + kCompactPreviewWidth + 32;
-    previewRect_.bottom = previewRect_.top + kCompactPreviewHeight + 64;
+    const int previewLeft = panelWidth + margin;
+    const int previewTop = margin;
+    previewRect_.left = previewLeft;
+    previewRect_.top = previewTop;
+    previewRect_.right = std::max(previewLeft + kMinimumPreviewWidth, clientWidth - margin);
+    previewRect_.bottom = std::max(previewTop + kMinimumPreviewHeight + 64, clientHeight - margin);
 }
 
 void MainWindow::DrawPreview(HDC dc, const RECT&) {
+    auto frame = controller_ ? controller_->GetLatestFrame() : nullptr;
+
     HBRUSH background = CreateSolidBrush(RGB(18, 18, 20));
     FillRect(dc, &previewRect_, background);
     DeleteObject(background);
@@ -456,9 +461,14 @@ void MainWindow::DrawPreview(HDC dc, const RECT&) {
     titleRect.bottom = titleRect.top + 28;
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(222, 228, 235));
-    DrawTextW(dc, L"Live Preview - 192 x 108", -1, &titleRect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+    std::wstring title = L"Live Preview";
+    if (frame && frame->width > 0 && frame->height > 0) {
+        wchar_t titleBuffer[96] = {};
+        std::swprintf(titleBuffer, sizeof(titleBuffer) / sizeof(titleBuffer[0]), L"Live Preview - %d x %d", frame->width, frame->height);
+        title = titleBuffer;
+    }
+    DrawTextW(dc, title.c_str(), -1, &titleRect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
 
-    auto frame = controller_ ? controller_->GetLatestFrame() : nullptr;
     if (!frame || frame->bgra.empty()) {
         RECT emptyRect = previewRect_;
         emptyRect.top += 48;
@@ -497,6 +507,8 @@ void MainWindow::DrawPreview(HDC dc, const RECT&) {
     bitmapInfo.bmiHeader.biBitCount = 32;
     bitmapInfo.bmiHeader.biCompression = BI_RGB;
 
+    const int oldStretchMode = SetStretchBltMode(dc, HALFTONE);
+    SetBrushOrgEx(dc, 0, 0, nullptr);
     StretchDIBits(
         dc,
         drawLeft,
@@ -511,6 +523,9 @@ void MainWindow::DrawPreview(HDC dc, const RECT&) {
         &bitmapInfo,
         DIB_RGB_COLORS,
         SRCCOPY);
+    if (oldStretchMode) {
+        SetStretchBltMode(dc, oldStretchMode);
+    }
 }
 
 std::wstring MainWindow::GetWindowTextString(HWND control) const {
