@@ -11,7 +11,7 @@ The current build is a CEF offscreen renderer wired to the DeckLink output path:
 - includes `None (preview only)` and `Mock DeckLink Output` modes for machines without DeckLink hardware
 - schedules BGRA frames to real DeckLink SDI output when a device is selected
 
-Available output modes are `1080i50`, `1080p25`, and `1080p50`; `1080i50` remains the default.
+Output is fixed to `1080i50`.
 
 ## Current Status
 
@@ -19,7 +19,6 @@ Working now:
 
 - Win32 desktop UI
 - URL entry
-- output mode selector
 - DeckLink device selector
 - native DeckLink device enumeration
 - preview-only mode

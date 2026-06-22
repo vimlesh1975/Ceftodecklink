@@ -16,7 +16,6 @@ constexpr UINT_PTR kUiTimer = 1;
 constexpr UINT kUiTimerIntervalMs = 16;
 
 constexpr int kUrlEditId = 1001;
-constexpr int kModeComboId = 1002;
 constexpr int kDeckLinkComboId = 1003;
 constexpr int kMirrorCheckId = 1004;
 constexpr int kReconnectCheckId = 1005;
@@ -51,6 +50,10 @@ std::wstring FormatCounter(const wchar_t* label, std::uint64_t value) {
     return buffer;
 }
 
+VideoMode FixedOutputMode() {
+    return {L"1080i50 - 1920 x 1080 @ 25", 1920, 1080, 25, 1, true};
+}
+
 } // namespace
 
 int RunMainWindow(HINSTANCE instance, int showCommand) {
@@ -69,11 +72,6 @@ int RunMainWindow(HINSTANCE instance, int showCommand) {
 }
 
 MainWindow::MainWindow(HINSTANCE instance) : instance_(instance) {
-    modes_ = {
-        {L"1080i50 - 1920 x 1080 @ 25", 1920, 1080, 25, 1, true},
-        {L"1080p25 - 1920 x 1080 @ 25", 1920, 1080, 25, 1, false},
-        {L"1080p50 - 1920 x 1080 @ 50", 1920, 1080, 50, 1, false},
-    };
 }
 
 MainWindow::~MainWindow() {
@@ -167,13 +165,6 @@ void MainWindow::OnCreate() {
     urlLabel_ = CreateChild(hwnd_, L"STATIC", L"HTML URL", 0, 0);
     urlEdit_ = CreateChild(hwnd_, L"EDIT", L"http://localhost:14000/CasparcgOutput", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, kUrlEditId);
 
-    modeLabel_ = CreateChild(hwnd_, L"STATIC", L"Output Mode", 0, 0);
-    modeCombo_ = CreateChild(hwnd_, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST | CBS_HASSTRINGS, kModeComboId);
-    for (const auto& mode : modes_) {
-        SendMessageW(modeCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(mode.name.c_str()));
-    }
-    SendMessageW(modeCombo_, CB_SETCURSEL, 0, 0);
-
     deckLinkLabel_ = CreateChild(hwnd_, L"STATIC", L"DeckLink Device", 0, 0);
     deckLinkCombo_ = CreateChild(hwnd_, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST | CBS_HASSTRINGS, kDeckLinkComboId);
     RefreshDeckLinkDevices();
@@ -194,7 +185,7 @@ void MainWindow::OnCreate() {
     backendLabel_ = CreateChild(hwnd_, L"STATIC", L"", 0, 0);
 
     HWND controls[] = {
-        urlLabel_, urlEdit_, modeLabel_, modeCombo_, deckLinkLabel_, deckLinkCombo_, mirrorCheck_, reconnectCheck_, startButton_, stopButton_,
+        urlLabel_, urlEdit_, deckLinkLabel_, deckLinkCombo_, mirrorCheck_, reconnectCheck_, startButton_, stopButton_,
         statusLabel_, fpsLabel_, framesLabel_, dropsLabel_, backendLabel_
     };
     for (HWND control : controls) {
@@ -300,7 +291,7 @@ void MainWindow::OnDestroy() {
 void MainWindow::StartOutput() {
     RenderSettings settings;
     settings.url = GetWindowTextString(urlEdit_);
-    settings.mode = SelectedMode();
+    settings.mode = FixedOutputMode();
     settings.mirrorOutput = SendMessageW(mirrorCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
     settings.autoReconnect = SendMessageW(reconnectCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
     const auto selectedDeckLink = static_cast<int>(SendMessageW(deckLinkCombo_, CB_GETCURSEL, 0, 0));
@@ -401,11 +392,6 @@ void MainWindow::LayoutControls(const RECT& clientRect) {
     MoveWindow(urlLabel_, margin, y, panelWidth - (margin * 2), labelHeight, TRUE);
     y += labelHeight;
     MoveWindow(urlEdit_, margin, y, panelWidth - (margin * 2), rowHeight, TRUE);
-    y += rowHeight + gap;
-
-    MoveWindow(modeLabel_, margin, y, panelWidth - (margin * 2), labelHeight, TRUE);
-    y += labelHeight;
-    MoveWindow(modeCombo_, margin, y, panelWidth - (margin * 2), 240, TRUE);
     y += rowHeight + gap;
 
     MoveWindow(deckLinkLabel_, margin, y, panelWidth - (margin * 2), labelHeight, TRUE);
@@ -538,14 +524,6 @@ std::wstring MainWindow::GetWindowTextString(HWND control) const {
     }
     text.resize(std::wcslen(text.c_str()));
     return text;
-}
-
-VideoMode MainWindow::SelectedMode() const {
-    const auto index = static_cast<int>(SendMessageW(modeCombo_, CB_GETCURSEL, 0, 0));
-    if (index >= 0 && index < static_cast<int>(modes_.size())) {
-        return modes_[static_cast<std::size_t>(index)];
-    }
-    return modes_.front();
 }
 
 void MainWindow::SetStatus(const std::wstring& status) {

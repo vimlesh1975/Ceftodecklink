@@ -38,7 +38,6 @@ private:
     void DrawPreview(HDC dc, const RECT& clientRect);
 
     std::wstring GetWindowTextString(HWND control) const;
-    VideoMode SelectedMode() const;
     void SetStatus(const std::wstring& status);
 
     HINSTANCE instance_ = nullptr;
@@ -47,8 +46,6 @@ private:
 
     HWND urlLabel_ = nullptr;
     HWND urlEdit_ = nullptr;
-    HWND modeLabel_ = nullptr;
-    HWND modeCombo_ = nullptr;
     HWND deckLinkLabel_ = nullptr;
     HWND deckLinkCombo_ = nullptr;
     HWND mirrorCheck_ = nullptr;
@@ -62,7 +59,6 @@ private:
     HWND backendLabel_ = nullptr;
 
     RECT previewRect_{};
-    std::vector<VideoMode> modes_;
     std::vector<DeckLinkDeviceInfo> deckLinkDevices_;
     std::wstring deckLinkStatus_;
     DWORD lastStatusUpdateTick_ = 0;
