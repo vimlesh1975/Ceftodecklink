@@ -71,6 +71,8 @@ int RunMainWindow(HINSTANCE instance, int showCommand) {
 MainWindow::MainWindow(HINSTANCE instance) : instance_(instance) {
     modes_ = {
         {L"1080i50 - 1920 x 1080 @ 25", 1920, 1080, 25, 1, true},
+        {L"1080p25 - 1920 x 1080 @ 25", 1920, 1080, 25, 1, false},
+        {L"1080p50 - 1920 x 1080 @ 50", 1920, 1080, 50, 1, false},
     };
 }
 

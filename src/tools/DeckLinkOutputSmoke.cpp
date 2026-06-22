@@ -44,6 +44,7 @@ bool EqualsIgnoreCase(const wchar_t* left, const wchar_t* right) {
 int wmain(int argc, wchar_t** argv) {
     const int deviceIndex = argc > 1 ? ParseInt(argv[1], 0) : 0;
     const int seconds = argc > 2 ? ParseInt(argv[2], 5) : 5;
+    const bool progressive25 = argc > 3 && EqualsIgnoreCase(argv[3], L"p25");
     const bool progressive50 = argc > 3 && EqualsIgnoreCase(argv[3], L"p50");
 
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -53,12 +54,12 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     ceftod::VideoMode mode;
-    mode.name = progressive50 ? L"1080p50 - 1920 x 1080 @ 50" : L"1080i50 - 1920 x 1080 @ 25";
+    mode.name = progressive50 ? L"1080p50 - 1920 x 1080 @ 50" : (progressive25 ? L"1080p25 - 1920 x 1080 @ 25" : L"1080i50 - 1920 x 1080 @ 25");
     mode.width = 1920;
     mode.height = 1080;
     mode.fpsNumerator = progressive50 ? 50 : 25;
     mode.fpsDenominator = 1;
-    mode.interlaced = !progressive50;
+    mode.interlaced = !progressive25 && !progressive50;
 
     auto output = ceftod::CreateDeckLinkOutput();
     std::wstring error;

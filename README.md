@@ -6,12 +6,12 @@ The current build is a CEF offscreen renderer wired to the DeckLink output path:
 
 - loads `http://localhost:14000/CasparcgOutput` by default
 - renders the page with Chromium Embedded Framework offscreen rendering
-- shows a compact `192 x 108` preview drawn from the same full-frame BGRA source used for output
+- shows a live preview drawn from the same full-frame BGRA source used for output
 - enumerates installed DeckLink devices through the native Blackmagic COM interfaces
 - includes `None (preview only)` and `Mock DeckLink Output` modes for machines without DeckLink hardware
 - schedules BGRA frames to real DeckLink SDI output when a device is selected
 
-The preview is intentionally small for now, but it represents the full HD frame. It is not a cropped browser window.
+Available output modes are `1080i50`, `1080p25`, and `1080p50`; `1080i50` remains the default.
 
 ## Current Status
 
@@ -88,9 +88,7 @@ build\Release\CeftoDecklink.exe
 
 ## How The Preview Works
 
-The visible preview is only `192 x 108`, which is 10% of `1920 x 1080`.
-
-Internally, CEF renders the configured page at the selected output mode size. The CEF render handler receives BGRA frames, caches the latest image, and a pacing thread submits that latest frame at the selected SDI cadence. The compact preview panel draws the same cached frame.
+Internally, CEF renders the configured page at the selected output mode size. The CEF render handler receives BGRA frames, caches the latest image, and a pacing thread submits that latest frame at the selected SDI cadence. The preview panel draws the same cached frame scaled to the app window.
 
 ## DeckLink Notes
 
