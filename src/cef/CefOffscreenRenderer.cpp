@@ -121,6 +121,14 @@ std::wstring CeftoLocalDataPath() {
 class CeftoCefApp final : public CefApp {
 public:
     void OnBeforeCommandLineProcessing(const CefString& processType, CefRefPtr<CefCommandLine> commandLine) override {
+        commandLine->AppendSwitch("no-sandbox");
+        commandLine->AppendSwitch("disable-gpu");
+        commandLine->AppendSwitch("disable-gpu-compositing");
+        commandLine->AppendSwitch("disable-direct-composition");
+        commandLine->AppendSwitch("disable-d3d11");
+        commandLine->AppendSwitch("disable-webgl");
+        commandLine->AppendSwitch("disable-accelerated-2d-canvas");
+        commandLine->AppendSwitch("disable-accelerated-video-decode");
         if (processType.empty()) {
             commandLine->AppendSwitch("disable-background-timer-throttling");
             commandLine->AppendSwitch("disable-renderer-backgrounding");
@@ -152,10 +160,12 @@ bool AcquireCef(std::wstring* error) {
     settings.log_severity = LOGSEVERITY_WARNING;
     const auto cacheRoot = JoinPath(CeftoLocalDataPath(), L"CefRoot");
     const auto cachePath = JoinPath(cacheRoot, L"Cache");
+    const auto logPath = JoinPath(cacheRoot, L"cef.log");
     CreateDirectoryW(cacheRoot.c_str(), nullptr);
     CreateDirectoryW(cachePath.c_str(), nullptr);
     CefString(&settings.root_cache_path).FromWString(cacheRoot);
     CefString(&settings.cache_path).FromWString(cachePath);
+    CefString(&settings.log_file).FromWString(logPath);
 
     g_cefApp = new CeftoCefApp();
     if (!CefInitialize(mainArgs, settings, g_cefApp, nullptr)) {

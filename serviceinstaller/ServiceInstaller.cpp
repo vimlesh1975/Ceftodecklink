@@ -141,6 +141,21 @@ bool ConfigureService(SC_HANDLE service) {
     SERVICE_DELAYED_AUTO_START_INFO delayed = {};
     delayed.fDelayedAutostart = TRUE;
     ChangeServiceConfig2W(service, SERVICE_CONFIG_DELAYED_AUTO_START_INFO, &delayed);
+
+    SC_ACTION restartActions[] = {
+        {SC_ACTION_RESTART, 5000},
+        {SC_ACTION_RESTART, 5000},
+        {SC_ACTION_RESTART, 30000},
+    };
+    SERVICE_FAILURE_ACTIONSW failureActions = {};
+    failureActions.dwResetPeriod = 60;
+    failureActions.cActions = static_cast<DWORD>(sizeof(restartActions) / sizeof(restartActions[0]));
+    failureActions.lpsaActions = restartActions;
+    ChangeServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS, &failureActions);
+
+    SERVICE_FAILURE_ACTIONS_FLAG failureFlag = {};
+    failureFlag.fFailureActionsOnNonCrashFailures = TRUE;
+    ChangeServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS_FLAG, &failureFlag);
     return true;
 }
 
