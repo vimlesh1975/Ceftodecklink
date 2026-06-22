@@ -163,6 +163,8 @@ target_link_libraries(CeftoDecklinkService PRIVATE
     ole32
     oleaut32
     shell32
+    userenv
+    wtsapi32
     windowscodecs
     crypt32
 )

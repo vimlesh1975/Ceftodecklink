@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -31,50 +32,14 @@
 namespace ceftod {
 namespace {
 
-std::shared_ptr<FrameBuffer> MakeWaitingFrame(const VideoMode& mode, std::uint64_t sequence) {
+std::shared_ptr<FrameBuffer> MakeWaitingFrame(const VideoMode& mode) {
     auto frame = std::make_shared<FrameBuffer>();
     frame->width = mode.width;
     frame->height = mode.height;
     frame->strideBytes = mode.width * 4;
-    frame->sequence = sequence;
+    frame->sequence = std::numeric_limits<std::uint64_t>::max();
     frame->timestamp = std::chrono::steady_clock::now();
-    frame->bgra.resize(static_cast<std::size_t>(frame->strideBytes) * frame->height);
-
-    const std::uint8_t bars[][3] = {
-        {255, 255, 255},
-        {0, 255, 255},
-        {255, 255, 0},
-        {0, 255, 0},
-        {255, 0, 255},
-        {0, 0, 255},
-        {255, 0, 0},
-        {0, 0, 0},
-    };
-    constexpr int barCount = static_cast<int>(sizeof(bars) / sizeof(bars[0]));
-
-    for (int y = 0; y < frame->height; ++y) {
-        auto* row = frame->bgra.data() + (static_cast<std::size_t>(y) * frame->strideBytes);
-        for (int x = 0; x < frame->width; ++x) {
-            const int bar = std::min(barCount - 1, (x * barCount) / std::max(1, frame->width));
-            row[x * 4 + 0] = bars[bar][0];
-            row[x * 4 + 1] = bars[bar][1];
-            row[x * 4 + 2] = bars[bar][2];
-            row[x * 4 + 3] = 255;
-        }
-    }
-
-    const int stripeWidth = std::max(12, frame->width / 90);
-    const int stripeX = static_cast<int>((sequence * 11) % static_cast<std::uint64_t>(std::max(1, frame->width)));
-    for (int y = 0; y < frame->height; ++y) {
-        auto* row = frame->bgra.data() + (static_cast<std::size_t>(y) * frame->strideBytes);
-        for (int dx = 0; dx < stripeWidth; ++dx) {
-            const int x = (stripeX + dx) % frame->width;
-            row[x * 4 + 0] = 20;
-            row[x * 4 + 1] = 20;
-            row[x * 4 + 2] = 20;
-            row[x * 4 + 3] = 255;
-        }
-    }
+    frame->bgra.assign(static_cast<std::size_t>(frame->strideBytes) * frame->height, 0);
 
     return frame;
 }
@@ -122,13 +87,6 @@ class CeftoCefApp final : public CefApp {
 public:
     void OnBeforeCommandLineProcessing(const CefString& processType, CefRefPtr<CefCommandLine> commandLine) override {
         commandLine->AppendSwitch("no-sandbox");
-        commandLine->AppendSwitch("disable-gpu");
-        commandLine->AppendSwitch("disable-gpu-compositing");
-        commandLine->AppendSwitch("disable-direct-composition");
-        commandLine->AppendSwitch("disable-d3d11");
-        commandLine->AppendSwitch("disable-webgl");
-        commandLine->AppendSwitch("disable-accelerated-2d-canvas");
-        commandLine->AppendSwitch("disable-accelerated-video-decode");
         if (processType.empty()) {
             commandLine->AppendSwitch("disable-background-timer-throttling");
             commandLine->AppendSwitch("disable-renderer-backgrounding");
@@ -431,7 +389,7 @@ private:
         const double fps = std::max(1.0, mode_.FramesPerSecond());
         const auto frameDuration = std::chrono::duration<double>(1.0 / fps);
         auto nextFrameTime = std::chrono::steady_clock::now();
-        std::uint64_t waitingSequence = 0;
+        const auto waitingFrame = MakeWaitingFrame(mode_);
 
         while (running_.load()) {
             std::shared_ptr<const FrameBuffer> frame;
@@ -439,7 +397,7 @@ private:
                 frame = client_->LatestFrame();
             }
             if (!frame) {
-                frame = MakeWaitingFrame(mode_, waitingSequence++);
+                frame = waitingFrame;
             }
 
             if (callback_) {

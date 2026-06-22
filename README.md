@@ -84,7 +84,7 @@ Install and start the service from an elevated prompt, or run the installer and 
 .\build\Release\CeftoDecklinkServiceInstaller.exe install
 ```
 
-The service is installed as `CeftoDecklinkService`, starts with Windows using delayed auto-start, loads `http://localhost:14000/CasparcgOutput`, uses fixed `1080i50`, and outputs to the first available DeckLink device.
+The service is installed as `CeftoDecklinkService`, starts with Windows using delayed auto-start, loads `http://localhost:14000/CasparcgOutput`, uses fixed `1080i50`, and outputs to the first available DeckLink device. CEF runs in a hidden worker in the active Windows user session, so a user must be logged in. The service waits and retries when no user session or DeckLink device is available.
 
 Other service commands:
 
@@ -98,6 +98,12 @@ Service log:
 
 ```text
 C:\ProgramData\CeftoDecklink\service.log
+```
+
+Renderer worker log:
+
+```text
+%LOCALAPPDATA%\CeftoDecklink\worker.log
 ```
 
 ## Manual CMake Build

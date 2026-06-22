@@ -7,19 +7,24 @@
 #include <chrono>
 #include <cstdio>
 #include <cwchar>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <objbase.h>
 #include <shlobj.h>
+#include <userenv.h>
 #include <windows.h>
+#include <wtsapi32.h>
 
 namespace {
 
 constexpr wchar_t kServiceName[] = L"CeftoDecklinkService";
 constexpr wchar_t kDefaultUrl[] = L"http://localhost:14000/CasparcgOutput";
+constexpr wchar_t kWorkerArgument[] = L"--ceftod-worker";
 constexpr DWORD kRetryDelayMs = 5000;
 
 SERVICE_STATUS_HANDLE g_statusHandle = nullptr;
@@ -28,6 +33,7 @@ HANDLE g_stopEvent = nullptr;
 std::thread g_worker;
 std::atomic_bool g_stopRequested{false};
 DWORD g_checkPoint = 1;
+bool g_isRendererWorker = false;
 
 std::wstring JoinPath(const std::wstring& left, const wchar_t* right) {
     if (left.empty()) {
@@ -61,6 +67,19 @@ std::wstring ProgramDataLogPath() {
     return JoinPath(appPath, L"service.log");
 }
 
+std::wstring WorkerLogPath() {
+    PWSTR localAppData = nullptr;
+    std::wstring basePath;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &localAppData)) && localAppData) {
+        basePath = localAppData;
+        CoTaskMemFree(localAppData);
+    }
+
+    const auto appPath = JoinPath(basePath, L"CeftoDecklink");
+    CreateDirectoryW(appPath.c_str(), nullptr);
+    return JoinPath(appPath, L"worker.log");
+}
+
 void LogLine(const std::wstring& message) {
     SYSTEMTIME now = {};
     GetLocalTime(&now);
@@ -78,7 +97,8 @@ void LogLine(const std::wstring& message) {
         now.wSecond);
 
     FILE* log = nullptr;
-    if (_wfopen_s(&log, ProgramDataLogPath().c_str(), L"a, ccs=UTF-8") == 0 && log) {
+    const auto logPath = g_isRendererWorker ? WorkerLogPath() : ProgramDataLogPath();
+    if (_wfopen_s(&log, logPath.c_str(), L"a, ccs=UTF-8") == 0 && log) {
         std::fwprintf(log, L"%s %s\n", stamp, message.c_str());
         std::fclose(log);
     }
@@ -167,9 +187,17 @@ void RunOutputWorker() {
         }
 
         LogLine(L"Output running on " + selectedDeviceName);
+        bool contentFrameLogged = false;
         while (!g_stopRequested.load()) {
             if (WaitForStop(1000)) {
                 break;
+            }
+            if (!contentFrameLogged) {
+                const auto frame = controller->GetLatestFrame();
+                if (frame && frame->sequence != std::numeric_limits<std::uint64_t>::max()) {
+                    LogLine(L"CEF content frames are reaching DeckLink output.");
+                    contentFrameLogged = true;
+                }
             }
         }
 
@@ -186,6 +214,149 @@ void RunOutputWorker() {
     if (comInitialized) {
         CoUninitialize();
     }
+}
+
+DWORD ActiveUserSessionId() {
+    PWTS_SESSION_INFOW sessions = nullptr;
+    DWORD sessionCount = 0;
+    DWORD activeSession = 0xFFFFFFFF;
+    if (WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &sessions, &sessionCount)) {
+        for (DWORD index = 0; index < sessionCount; ++index) {
+            if (sessions[index].State == WTSActive) {
+                activeSession = sessions[index].SessionId;
+                break;
+            }
+        }
+        WTSFreeMemory(sessions);
+    }
+    return activeSession;
+}
+
+std::wstring CurrentExecutablePath() {
+    std::vector<wchar_t> path(32768);
+    const DWORD length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+    if (length == 0 || length >= path.size()) {
+        return {};
+    }
+    return std::wstring(path.data(), length);
+}
+
+bool LaunchRendererWorker(HANDLE* processHandle, HANDLE* jobHandle, std::wstring* error) {
+    const DWORD sessionId = ActiveUserSessionId();
+    if (sessionId == 0xFFFFFFFF) {
+        *error = L"No logged-in user session is active.";
+        return false;
+    }
+
+    HANDLE userToken = nullptr;
+    if (!WTSQueryUserToken(sessionId, &userToken)) {
+        *error = L"Unable to obtain active user token (" + std::to_wstring(GetLastError()) + L").";
+        return false;
+    }
+
+    void* environment = nullptr;
+    CreateEnvironmentBlock(&environment, userToken, FALSE);
+
+    const auto executable = CurrentExecutablePath();
+    std::wstring commandLine = L"\"" + executable + L"\" " + kWorkerArgument;
+    std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
+    mutableCommand.push_back(L'\0');
+
+    std::wstring workingDirectory = executable;
+    const auto separator = workingDirectory.find_last_of(L"\\/");
+    workingDirectory = separator == std::wstring::npos ? L"" : workingDirectory.substr(0, separator);
+
+    STARTUPINFOW startup = {};
+    startup.cb = sizeof(startup);
+    wchar_t desktop[] = L"winsta0\\default";
+    startup.lpDesktop = desktop;
+
+    PROCESS_INFORMATION process = {};
+    const DWORD creationFlags = CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW;
+    const BOOL created = CreateProcessAsUserW(
+        userToken,
+        executable.c_str(),
+        mutableCommand.data(),
+        nullptr,
+        nullptr,
+        FALSE,
+        creationFlags,
+        environment,
+        workingDirectory.empty() ? nullptr : workingDirectory.c_str(),
+        &startup,
+        &process);
+    const DWORD createError = created ? ERROR_SUCCESS : GetLastError();
+
+    if (environment) {
+        DestroyEnvironmentBlock(environment);
+    }
+    CloseHandle(userToken);
+
+    if (!created) {
+        *error = L"Unable to launch renderer worker (" + std::to_wstring(createError) + L").";
+        return false;
+    }
+
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    const bool jobReady = job &&
+        SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) &&
+        AssignProcessToJobObject(job, process.hProcess);
+    if (!jobReady) {
+        const DWORD jobError = GetLastError();
+        TerminateProcess(process.hProcess, jobError);
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        if (job) {
+            CloseHandle(job);
+        }
+        *error = L"Unable to create renderer worker job (" + std::to_wstring(jobError) + L").";
+        return false;
+    }
+
+    ResumeThread(process.hThread);
+    CloseHandle(process.hThread);
+    *processHandle = process.hProcess;
+    *jobHandle = job;
+    return true;
+}
+
+void RunServiceWatchdog() {
+    LogLine(L"Service watchdog started.");
+
+    while (!g_stopRequested.load()) {
+        HANDLE rendererProcess = nullptr;
+        HANDLE rendererJob = nullptr;
+        std::wstring error;
+        if (!LaunchRendererWorker(&rendererProcess, &rendererJob, &error)) {
+            LogLine(error + L" Retrying.");
+            if (WaitForStop(kRetryDelayMs)) {
+                break;
+            }
+            continue;
+        }
+
+        LogLine(L"Renderer worker started in the active user session.");
+        const HANDLE waits[] = {g_stopEvent, rendererProcess};
+        const DWORD waitResult = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
+        if (waitResult == WAIT_OBJECT_0) {
+            TerminateJobObject(rendererJob, ERROR_PROCESS_ABORTED);
+            WaitForSingleObject(rendererProcess, 5000);
+        } else {
+            DWORD exitCode = 0;
+            GetExitCodeProcess(rendererProcess, &exitCode);
+            LogLine(L"Renderer worker exited with code " + std::to_wstring(exitCode) + L"; retrying.");
+        }
+
+        CloseHandle(rendererProcess);
+        CloseHandle(rendererJob);
+        if (!g_stopRequested.load() && WaitForStop(kRetryDelayMs)) {
+            break;
+        }
+    }
+
+    LogLine(L"Service watchdog stopped.");
 }
 
 DWORD WINAPI ServiceControlHandler(DWORD control, DWORD, void*, void*) {
@@ -219,7 +390,7 @@ void WINAPI ServiceMain(DWORD, LPWSTR*) {
     }
 
     g_stopRequested.store(false);
-    g_worker = std::thread(RunOutputWorker);
+    g_worker = std::thread(RunServiceWatchdog);
     ReportServiceState(SERVICE_RUNNING);
 
     WaitForSingleObject(g_stopEvent, INFINITE);
@@ -246,7 +417,7 @@ BOOL WINAPI ConsoleControlHandler(DWORD control) {
     return FALSE;
 }
 
-int RunConsoleMode() {
+int RunWorkerMode() {
     g_stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!g_stopEvent) {
         return 1;
@@ -277,23 +448,47 @@ int RunServiceDispatcher() {
         return 0;
     }
 
-    if (GetLastError() == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
-        return RunConsoleMode();
-    }
-
     return 1;
+}
+
+bool HasArgument(int argc, wchar_t** argv, const wchar_t* expected) {
+    for (int index = 1; index < argc; ++index) {
+        if (_wcsicmp(argv[index], expected) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool HasCefProcessType(int argc, wchar_t** argv) {
+    for (int index = 1; index < argc; ++index) {
+        if (wcsncmp(argv[index], L"--type=", 7) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace
 
-int wmain() {
+int wmain(int argc, wchar_t** argv) {
+    const bool rendererWorker = HasArgument(argc, argv, kWorkerArgument);
+    const bool cefSubprocess = HasCefProcessType(argc, argv);
+
 #if CEFTOD_WITH_CEF
-    const CefMainArgs mainArgs(GetModuleHandleW(nullptr));
-    const int cefExitCode = CefExecuteProcess(mainArgs, ceftod::CreateCefApplication(), nullptr);
-    if (cefExitCode >= 0) {
-        return cefExitCode;
+    if (rendererWorker || cefSubprocess) {
+        const CefMainArgs mainArgs(GetModuleHandleW(nullptr));
+        const int cefExitCode = CefExecuteProcess(mainArgs, ceftod::CreateCefApplication(), nullptr);
+        if (cefExitCode >= 0) {
+            return cefExitCode;
+        }
     }
 #endif
+
+    if (rendererWorker) {
+        g_isRendererWorker = true;
+        return RunWorkerMode();
+    }
 
     return RunServiceDispatcher();
 }
