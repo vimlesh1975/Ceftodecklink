@@ -48,9 +48,33 @@ add_executable(CeftoDecklinkOutputSmoke
     src/core/RendererInterfaces.h
 )
 
+add_executable(CeftoDecklinkService
+    src/service/DeckLinkServiceMain.cpp
+    src/app/BackendFactory.cpp
+    src/app/BackendFactory.h
+    src/core/Frame.h
+    src/core/RenderController.cpp
+    src/core/RenderController.h
+    src/core/RendererInterfaces.h
+    src/cef/CefOffscreenRenderer.cpp
+    src/cef/CefOffscreenRenderer.h
+    src/decklink/DeckLinkDeviceEnumerator.cpp
+    src/decklink/DeckLinkDeviceEnumerator.h
+    src/decklink/DeckLinkOutput.cpp
+    src/decklink/DeckLinkOutput.h
+    src/mock/MockDeckLinkOutput.cpp
+    src/mock/MockDeckLinkOutput.h
+)
+
+add_executable(CeftoDecklinkServiceInstaller
+    serviceinstaller/ServiceInstaller.cpp
+)
+
 target_compile_features(CeftoDecklink PRIVATE cxx_std_17)
 target_compile_features(CeftoDecklinkCheck PRIVATE cxx_std_17)
 target_compile_features(CeftoDecklinkOutputSmoke PRIVATE cxx_std_17)
+target_compile_features(CeftoDecklinkService PRIVATE cxx_std_17)
+target_compile_features(CeftoDecklinkServiceInstaller PRIVATE cxx_std_17)
 
 target_include_directories(CeftoDecklink PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -59,6 +83,9 @@ target_include_directories(CeftoDecklinkCheck PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_include_directories(CeftoDecklinkOutputSmoke PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_include_directories(CeftoDecklinkService PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
@@ -83,16 +110,36 @@ target_compile_definitions(CeftoDecklinkOutputSmoke PRIVATE
     WIN32_LEAN_AND_MEAN
     CEFTOD_WITH_DECKLINK=$<BOOL:${CEFTOD_WITH_DECKLINK}>
 )
+target_compile_definitions(CeftoDecklinkService PRIVATE
+    UNICODE
+    _UNICODE
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN
+    CEFTOD_WITH_CEF=$<BOOL:${CEFTOD_WITH_CEF}>
+    CEFTOD_WITH_DECKLINK=$<BOOL:${CEFTOD_WITH_DECKLINK}>
+)
+target_compile_definitions(CeftoDecklinkServiceInstaller PRIVATE
+    UNICODE
+    _UNICODE
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN
+)
 
 if(MSVC)
     target_compile_options(CeftoDecklink PRIVATE /W4 /permissive- /EHsc /FS)
     set_property(TARGET CeftoDecklink PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(CeftoDecklinkCheck PRIVATE /W4 /permissive- /EHsc)
     target_compile_options(CeftoDecklinkOutputSmoke PRIVATE /W4 /permissive- /EHsc)
+    target_compile_options(CeftoDecklinkService PRIVATE /W4 /permissive- /EHsc /FS)
+    set_property(TARGET CeftoDecklinkService PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(CeftoDecklinkServiceInstaller PRIVATE /W4 /permissive- /EHsc)
+    set_property(TARGET CeftoDecklinkServiceInstaller PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
     target_compile_options(CeftoDecklink PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(CeftoDecklinkCheck PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(CeftoDecklinkOutputSmoke PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(CeftoDecklinkService PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(CeftoDecklinkServiceInstaller PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 target_link_libraries(CeftoDecklink PRIVATE
@@ -111,9 +158,25 @@ target_link_libraries(CeftoDecklinkOutputSmoke PRIVATE
     ole32
     oleaut32
 )
+target_link_libraries(CeftoDecklinkService PRIVATE
+    advapi32
+    ole32
+    oleaut32
+    shell32
+    windowscodecs
+    crypt32
+)
+target_link_libraries(CeftoDecklinkServiceInstaller PRIVATE
+    advapi32
+    shell32
+)
 
 if(NOT CEFTOD_WITH_CEF)
     target_sources(CeftoDecklink PRIVATE
+        src/mock/MockHtmlRenderer.cpp
+        src/mock/MockHtmlRenderer.h
+    )
+    target_sources(CeftoDecklinkService PRIVATE
         src/mock/MockHtmlRenderer.cpp
         src/mock/MockHtmlRenderer.h
     )
@@ -137,17 +200,19 @@ if(CEFTOD_WITH_CEF)
     ADD_LOGICAL_TARGET(libcef_lib "${CEF_LIB_RELEASE}" "${CEF_LIB_RELEASE}")
     add_subdirectory("${CEF_LIBCEF_DLL_WRAPPER_PATH}" "${CMAKE_BINARY_DIR}/libcef_dll_wrapper")
 
-    target_compile_features(CeftoDecklink PRIVATE cxx_std_20)
-    target_include_directories(CeftoDecklink SYSTEM PRIVATE "${CEF_INCLUDE_PATH}")
-    target_compile_definitions(CeftoDecklink PRIVATE __STDC_CONSTANT_MACROS __STDC_FORMAT_MACROS)
-    if(MSVC)
-        target_link_options(CeftoDecklink PRIVATE /STACK:0x800000)
-    endif()
-    target_link_libraries(CeftoDecklink PRIVATE libcef_lib libcef_dll_wrapper ${CEF_STANDARD_LIBS})
-    add_dependencies(CeftoDecklink libcef_dll_wrapper)
+    foreach(CEFTOD_CEF_TARGET CeftoDecklink CeftoDecklinkService)
+        target_compile_features(${CEFTOD_CEF_TARGET} PRIVATE cxx_std_20)
+        target_include_directories(${CEFTOD_CEF_TARGET} SYSTEM PRIVATE "${CEF_INCLUDE_PATH}")
+        target_compile_definitions(${CEFTOD_CEF_TARGET} PRIVATE __STDC_CONSTANT_MACROS __STDC_FORMAT_MACROS)
+        if(MSVC)
+            target_link_options(${CEFTOD_CEF_TARGET} PRIVATE /STACK:0x800000)
+        endif()
+        target_link_libraries(${CEFTOD_CEF_TARGET} PRIVATE libcef_lib libcef_dll_wrapper ${CEF_STANDARD_LIBS})
+        add_dependencies(${CEFTOD_CEF_TARGET} libcef_dll_wrapper)
 
-    COPY_FILES(CeftoDecklink "${CEF_BINARY_FILES}" "${CEF_BINARY_DIR}" "$<TARGET_FILE_DIR:CeftoDecklink>")
-    COPY_RESOURCES(CeftoDecklink "${CEF_RESOURCE_FILES}" "" "${CEF_RESOURCE_DIR}" "$<TARGET_FILE_DIR:CeftoDecklink>")
+        COPY_FILES(${CEFTOD_CEF_TARGET} "${CEF_BINARY_FILES}" "${CEF_BINARY_DIR}" "$<TARGET_FILE_DIR:${CEFTOD_CEF_TARGET}>")
+        COPY_RESOURCES(${CEFTOD_CEF_TARGET} "${CEF_RESOURCE_FILES}" "" "${CEF_RESOURCE_DIR}" "$<TARGET_FILE_DIR:${CEFTOD_CEF_TARGET}>")
+    endforeach()
 endif()
 
 if(CEFTOD_WITH_DECKLINK AND NOT MSVC)

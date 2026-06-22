@@ -69,6 +69,37 @@ or:
 Mock DeckLink Output
 ```
 
+## Windows Service
+
+The build also creates:
+
+```text
+build\Release\CeftoDecklinkService.exe
+build\Release\CeftoDecklinkServiceInstaller.exe
+```
+
+Install and start the service from an elevated prompt, or run the installer and approve UAC:
+
+```powershell
+.\build\Release\CeftoDecklinkServiceInstaller.exe install
+```
+
+The service is installed as `CeftoDecklinkService`, starts with Windows using delayed auto-start, loads `http://localhost:14000/CasparcgOutput`, uses fixed `1080i50`, and outputs to the first available DeckLink device.
+
+Other service commands:
+
+```powershell
+.\build\Release\CeftoDecklinkServiceInstaller.exe stop
+.\build\Release\CeftoDecklinkServiceInstaller.exe start
+.\build\Release\CeftoDecklinkServiceInstaller.exe uninstall
+```
+
+Service log:
+
+```text
+C:\ProgramData\CeftoDecklink\service.log
+```
+
 ## Manual CMake Build
 
 The helper script is recommended because it prepares the CEF SDK. If you want to run CMake manually, prepare the SDK first:
