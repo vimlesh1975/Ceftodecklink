@@ -28,6 +28,11 @@ std::wstring HResultText(HRESULT result) {
 
 #if CEFTOD_WITH_DECKLINK && defined(_MSC_VER)
 
+constexpr int kPrerollFrameCount = 1;
+constexpr unsigned int kMaxBufferedVideoFrames = 3;
+constexpr __int64 kMinimumScheduleLeadFrames = 1;
+constexpr __int64 kMaximumScheduleLeadFrames = 3;
+
 class ThreadComInitializer {
 public:
     ThreadComInitializer() {
@@ -235,7 +240,7 @@ public:
             return false;
         }
 
-        if (!ScheduleBlackFrames(3, error)) {
+        if (!ScheduleBlackFrames(kPrerollFrameCount, error)) {
             output_->DisableVideoOutput();
             output_.Reset();
             return false;
@@ -281,10 +286,10 @@ public:
         }
 
         unsigned int bufferedFrames = 0;
-        if (SUCCEEDED(output_->GetBufferedVideoFrameCount(&bufferedFrames)) && bufferedFrames > 8) {
+        if (SUCCEEDED(output_->GetBufferedVideoFrameCount(&bufferedFrames)) && bufferedFrames >= kMaxBufferedVideoFrames) {
             ++stats_.framesDropped;
-            nextStreamTime_ += frameDuration_;
-            stats_.status = L"DeckLink output buffering: " + deviceName_;
+            SyncNextStreamTimeToPlayback();
+            stats_.status = L"DeckLink output latency guard: " + deviceName_;
             return false;
         }
 
@@ -313,11 +318,12 @@ public:
 
         CopyFramePixels(*frame, bytes, mode_.width, mode_.height, mode_.width * 4, mirrorOutput_);
 
+        SyncNextStreamTimeToPlayback();
         hr = output_->ScheduleVideoFrame(deckLinkFrame.Get(), nextStreamTime_, frameDuration_, timeScale_);
         if (FAILED(hr)) {
             ++stats_.framesDropped;
             stats_.status = L"DeckLink frame schedule failed: " + HResultText(hr);
-            nextStreamTime_ += frameDuration_;
+            SyncNextStreamTimeToPlayback();
             return false;
         }
 
@@ -403,6 +409,29 @@ private:
         stats_.fps = static_cast<double>(deltaFrames) / elapsed;
         lastFpsFrameCount_ = stats_.framesSubmitted;
         lastFpsAt_ = now;
+    }
+
+    void SyncNextStreamTimeToPlayback() {
+        if (!output_ || frameDuration_ <= 0 || timeScale_ <= 0) {
+            return;
+        }
+
+        __int64 streamTime = 0;
+        double playbackSpeed = 0.0;
+        if (FAILED(output_->GetScheduledStreamTime(timeScale_, &streamTime, &playbackSpeed))) {
+            return;
+        }
+
+        const __int64 minimumLead = frameDuration_ * kMinimumScheduleLeadFrames;
+        const __int64 maximumLead = frameDuration_ * kMaximumScheduleLeadFrames;
+        const __int64 earliestFrameTime = streamTime + minimumLead;
+        const __int64 latestFrameTime = streamTime + maximumLead;
+
+        if (nextStreamTime_ < earliestFrameTime) {
+            nextStreamTime_ = earliestFrameTime;
+        } else if (nextStreamTime_ > latestFrameTime) {
+            nextStreamTime_ = latestFrameTime;
+        }
     }
 
     mutable std::mutex mutex_;
